@@ -20,13 +20,12 @@ query_file=$1
 
 
 name=$(echo $(basename $query_file) | sed 's/\.[^\.]*$//')
-log="${root_dir}/log/${name}.log"
-log="${name}.log"
+log_path="${root_dir}/log/${name}.log"
 
-echo "" > $log 2>&1
+echo "" > $log_path 2>&1
 snowsql \
     --private-key-path "${snowflake_keypair_path}" \
     -f "$query_file" \
     -o log_level=DEBUG \
-    > $log 2>&1 
-tail $log
+    > $log_path 2>&1 
+tail $log_path
