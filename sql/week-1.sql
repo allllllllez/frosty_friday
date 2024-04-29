@@ -3,7 +3,7 @@
 -- Week 1
 -- 
 -- FrostyFriday Inc., your benevolent employer, has an S3 bucket that is filled with .csv data dumps. This data is needed for analysis. Your task is to create an external stage, and load the csv files directly from that stage into a table.
--- あなたの優しい雇用主 FrostyFriday Inc. は、csv データダンプが詰まったS3バケットを持っています。 
+-- あなたの優しい雇用主 FrostyFriday Inc. は、csv にダンプしたデータが詰まったS3バケットを持っています。 
 -- これは分析に必要なデータです。
 -- あなたの仕事は、外部ステージを作成し、そのステージからcsvファイルをテーブルに直接ロードすることです。
 --
@@ -23,7 +23,7 @@ use schema M_KAJIYA_FROSTY_FRIDAY.PUBLIC;
 
 set url = 's3://frostyfridaychallenges/challenge_1/';
 
-create stage if not exists frosty_friday_stage
+create temp stage if not exists frosty_friday_stage
     url = $url;
 
 ls @frosty_friday_stage;
@@ -108,9 +108,16 @@ totally_empty
 congratulations!
 */
 
+-------------------------------------------------------------------------------
+-- いくつかの回答パターンを作ってみる
+-------------------------------------------------------------------------------
 
+-- 
 -- パターン1 COPY INTO
-create or replace table challenge_1_result (
+-- 便利なところ：ロード時にフォーマット指定するので file format 不要、アドホックにロードしたいときに使えるっちゃ使える（後述の infer_schema 方式があるので、一番ではない）
+-- 便利じゃないところ：先にテーブルを作成する必要がある。whereや集計関数が使えないので、csvの形そのままテーブル化するしかない。
+-- 
+create or replace temp table challenge_1_result (
     result varchar,
     file_name varchar,
     row_number int
@@ -131,25 +138,134 @@ copy into challenge_1_result
         null_if = ('NULL')
     )
 ;
-select listagg(result, ' ') within group (order by file_name, row_number) as result
-from challenge_1_result
-where result is not null and result != 'totally_empty'
+
+select
+    listagg(result, ' ') within group (order by file_name, row_number) as result
+from
+    challenge_1_result
+where
+    esult is not null
+    and result != 'totally_empty'
 ;
 -- RESULT
 -- you have gotten it right congratulations!
 
+------------------------------------------------
+-- 
 -- パターン2 CTAS
+-- 便利なところ：テーブル定義作成不要。where でのフィルタリング、集計関数での変形を挟むことができる。
+-- 便利じゃないところ：先に file format を作る必要がある
+-- 
 
+create temp file format challenge_1_format
+    type = csv
+    skip_header = 1
+    null_if = ('NULL')
+;
+
+create or replace table challenge_1_result (
+    result varchar,
+    file_name varchar,
+    row_number int
+) as
+select
+    $1::VARCHAR,
+    metadata$filename,
+    metadata$file_row_number
+from @frosty_friday_stage
+(file_format => 'challenge_1_format')
+;
+
+select
+    listagg(result, ' ') within group (order by file_name, row_number) as result
+from
+    challenge_1_result
+where
+    result is not null
+    and result != 'totally_empty'
+;
+
+-- RESULT
+-- you have gotten it right congratulations!
+
+-- 一気に文字列結合することもできる`
 create or replace table challenge_1_result (
     result varchar
 ) as
-select
-    $1::VARCHAR
-from @frosty_friday_stage
-file_format = (
-    type = csv
-    -- parse_header = TRUE  -- もしくは skip_header = 1
+-- まずは抽出。やってることは パターン1 と同じ
+with src as (
+    select
+        $1::VARCHAR as result,
+        metadata$filename as file_name,
+        metadata$file_row_number as row_number
+    from @frosty_friday_stage
+    (file_format => 'challenge_1_format')
 )
+-- ここで文字列結合してしまう
+select
+    listagg(result, ' ') within group (order by file_name, row_number) as result
+from
+    src
+where
+    result is not null
+    and result != 'totally_empty'
 ;
 
+table challenge_1_result;
+
+-- RESULT
+-- you have gotten it right congratulations!
+
+------------------------------------------------
+-- 
 -- パターン3 infar_schema
+-- 便利なところ：テーブル定義作成不要。where でのフィルタリング、集計関数での変形を挟むことができる。
+-- 便利じゃないところ：フォーマットを作る必要がある、ファイルにないカラムを追加するには alter table が必要、
+-- 
+
+create or replace temporary file format challenge_1_format
+    type = csv
+    parse_header = true
+    null_if = ('NULL')
+;
+
+create or replace table challenge_1_result
+    using template (
+        select
+            array_agg(object_construct(*))
+        from table(
+            infer_schema(
+                location=>'@frosty_friday_stage',
+                file_format=>'challenge_1_format'
+            )
+        )
+    )
+;
+
+desc table challenge_1_result;
+
+copy into challenge_1_result 
+    from (
+        select
+            $1::varchar as result
+        from
+            @frosty_friday_stage
+    )
+    file_format = (
+        type = csv
+        skip_header = 1
+        null_if = ('NULL')
+    )
+;
+
+table challenge_1_result;
+
+select listagg("result", ' ') as result
+from challenge_1_result
+where "result" is not null and "result" != 'totally_empty'
+;
+
+-- insert の順序が不定なので
+-- RESULT
+-- right congratulations! you have gotten it
+-- とかなったりする。。。
