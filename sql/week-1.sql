@@ -227,9 +227,9 @@ table challenge_1_result;
 -- 
 -- 便利なところ：
 --     - テーブル作成時、自分でカラムと方を指定しなくてよい（だけど、便利じゃなさとも言えて悩ましい）
+--     - ちょっと工夫すれば、カラム追加もでき、ステージのファイルに付与されたメタデータを取得できる
 -- 便利じゃないところ：
 --     - file formatを作る必要がある
---     - ファイルにないカラムを追加するには alter table が必要
 -- 
 
 create or replace temporary file format challenge_1_format
@@ -238,10 +238,53 @@ create or replace temporary file format challenge_1_format
     null_if = ('NULL')
 ;
 
+-- 準備。中身を調べる
+/*
+select
+    array_agg(object_construct(*))
+from table(
+    infer_schema(
+        location=>'@frosty_friday_stage',
+        file_format=>'challenge_1_format'
+    )
+);
+-- 
+ARRAY_AGG(OBJECT_CONSTRUCT(*))
+[
+  {
+    "COLUMN_NAME": "result",
+    "EXPRESSION": "$1::TEXT",
+    "FILENAMES": "challenge_1/3.csv, challenge_1/2.csv, challenge_1/1.csv",
+    "NULLABLE": true,
+    "ORDER_ID": 0,
+    "TYPE": "TEXT"
+  }
+]
+*/
+
+-- ↑を習って、列を追加
 create or replace temp table challenge_1_result
     using template (
         select
-            array_agg(object_construct(*))
+            array_cat(
+                array_agg(object_construct(*)),
+                [
+                    -- FILE_NAMEカラム
+                    {
+                        'COLUMN_NAME': 'FILE_NAME',
+                        'filenames': '',
+                        'NULLABLE': true,
+                        'TYPE': 'text'
+                    },
+                    -- ROW_NUMBERカラム
+                    {
+                        'COLUMN_NAME': 'ROW_NUMBER',
+                        'filenames': '',
+                        'NULLABLE': true,
+                        'TYPE': 'number'
+                    }
+                ]::VARIANT
+            )
         from table(
             infer_schema(
                 location=>'@frosty_friday_stage',
@@ -256,7 +299,9 @@ desc table challenge_1_result;
 copy into challenge_1_result 
     from (
         select
-            $1::varchar as result
+            $1::varchar as result,
+            metadata$filename as file_name,
+            metadata$file_row_number as row_number
         from
             @frosty_friday_stage
     )
@@ -269,9 +314,11 @@ copy into challenge_1_result
 
 table challenge_1_result;
 
-select listagg("result", ' ') as result
-from challenge_1_result
-where "result" is not null and "result" != 'totally_empty'
+select
+    listagg("result", ' ') within group (order by file_name, row_number) as result
+from
+    challenge_1_result
+where
+    "result" is not null and "result" != 'totally_empty'
 ;
 
--- insert の順序は不定。たまーに結合結果の文章がおかしいはず。。。ログ参照
