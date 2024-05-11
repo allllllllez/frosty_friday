@@ -1,0 +1,1378 @@
+/*
+Frosty Friday Consultants has been hired by the University of Frost’s history department;
+they want data on monarchs in their data warehouse for analysis.
+Your job is to take the JSON file located here, ingest it into the data warehouse, and parse it into a table that looks like this:
+Frosty Friday Consultants はフロスト大学の歴史学部に雇われました。
+彼らは、分析のためにデータウェアハウスに君主に関するデータを求めています。
+あなたの仕事は、ここ↓にあるJSONファイルをデータウェアハウスに取り込み、次のようなテーブルに解析することです：
+https://frostyfridaychallenges.s3.eu-west-1.amazonaws.com/challenge_4/Spanish_Monarchs.json
+
+テーブル；
+ID INTER_HOUSE_ID ERA HOUSE NAME NICKNAME_1 NICKNAME_2 NICKNAME_3 BIRTH PLACE_OF_BIRTH START_OF_REIGN QUEEN_OR_QUEEN_CONSORT_1 QUEEN_OR_QUEEN_CONSORT_2 QUEEN _OR_QUEEN_CONSORT_3 END_OF_REIGN DURATION DEATH AGE_AT_TIME_OF_DEATH_YEARS PLACE_OF_DEATH BURIAL_PLACE
+... 値は省略...
+
+- Separate columns for nicknames and consorts 1 – 3, many will be null.
+  ニックネームとコンソート1～3の列は別々で、多くはNULLになります。
+- An ID in chronological order (birth).
+  年代（birth）順でIDを振る。
+- An Inter-House ID in order as they appear in the file.
+  Inter-House ID はファイルに表示されている順番。
+- There should be 26 rows at the end.
+  最後は26行になるはずです。
+
+Hints:
+
+- Make sure you don’t lose any rows along the way.
+  途中で行がなくならないように注意すること。
+- Be sure to investigate all the outputs and parameters available when transforming JSON.
+  JSONを変換する際に利用可能なすべての出力とパラメーターを調べておくこと。
+*/
+
+use role SYSADMIN;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.089s
+use schema M_KAJIYA_FROSTY_FRIDAY.PUBLIC;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.066s
+-- 分析対象ファイル
+set url = 's3://frostyfridaychallenges/challenge_4';
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.097s
+set file_name = 'Spanish_Monarchs.json';
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.072s
+create temp stage if not exists frosty_friday_stage
+    url = $url;
++------------------------------------------------------+
+| status                                               |
+|------------------------------------------------------|
+| Stage area FROSTY_FRIDAY_STAGE successfully created. |
++------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.187s
+ls @frosty_friday_stage;
++---------------------------------------------------------------+-------+----------------------------------+-------------------------------+
+| name                                                          |  size | md5                              | last_modified                 |
+|---------------------------------------------------------------+-------+----------------------------------+-------------------------------|
+| s3://frostyfridaychallenges/challenge_4/Spanish_Monarchs.json | 15624 | 0b771d61cd3309b9291f02a5ee43a3b0 | Thu, 14 Jul 2022 17:55:56 GMT |
++---------------------------------------------------------------+-------+----------------------------------+-------------------------------+
+1 Row(s) produced. Time Elapsed: 0.744s
+-- とりあえずクエリすると、JSONが見える
+select top 10
+    $1::VARCHAR,
+from @frosty_friday_stage
+;
++---------------------------------------+
+| $1::VARCHAR                           |
+|---------------------------------------|
+| [                                     |
+|   {                                   |
+|     "Era": "Pre-Transition"           |
+|     "Houses": [                       |
+|       {                               |
+|         "House": "Austria"            |
+|         "Monarchs": [                 |
+|           {                           |
+|             "Name": "Felipe II"       |
+|             "Nickname": "el Prudente" |
++---------------------------------------+
+10 Row(s) produced. Time Elapsed: 1.482s
+-- ファイルフォーマットを作成
+create or replace temporary file format challenge_4_format
+    type = json
+    strip_outer_array = true -- 外側の [ ] を削除（いらない）
+;
++------------------------------------------------------+
+| status                                               |
+|------------------------------------------------------|
+| File format CHALLENGE_4_FORMAT successfully created. |
++------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.103s
+-- とりあえず推定してもらう（実際この構造になっているので安心）
+select *
+from table(
+    infer_schema(
+        location=>'@frosty_friday_stage'
+        , file_format=>'challenge_4_format'
+    )
+);
++-------------+-------+----------+------------------+-----------------------------------+----------+
+| COLUMN_NAME | TYPE  | NULLABLE | EXPRESSION       | FILENAMES                         | ORDER_ID |
+|-------------+-------+----------+------------------+-----------------------------------+----------|
+| Era         | TEXT  | True     | $1:Era::TEXT     | challenge_4/Spanish_Monarchs.json |        0 |
+| Houses      | ARRAY | True     | $1:Houses::ARRAY | challenge_4/Spanish_Monarchs.json |        1 |
++-------------+-------+----------+------------------+-----------------------------------+----------+
+2 Row(s) produced. Time Elapsed: 1.342s
+-- COLUMN_NAME	TYPE	NULLABLE	EXPRESSION	FILENAMES	ORDER_ID
+-- Era	TEXT	TRUE	$1:Era::TEXT	challenge_4/Spanish_Monarchs.json	0
+-- Houses	ARRAY	TRUE	$1:Houses::ARRAY	challenge_4/Spanish_Monarchs.json	1
+
+-- ... じゃあ Era と Houses で flatten しようぜ、となる
+
+
+-------------------------------------------------------------------------------
+-- いくつかの回答パターンを作ってみる
+-------------------------------------------------------------------------------
+
+
+-------------------------------------------------------------------------------
+-- 
+-- パターン1
+-- 
+-- CTAS
+-- 
+
+-- 一旦テーブルにロードしよう
+create or replace temp table challenge_4_load as
+select
+    $1::variant as value,
+from @frosty_friday_stage
+(file_format => 'challenge_4_format')
+;
++----------------------------------------------+
+| status                                       |
+|----------------------------------------------|
+| Table CHALLENGE_4_LOAD successfully created. |
++----------------------------------------------+
+1 Row(s) produced. Time Elapsed: 1.743s
+table challenge_4_load;
++-----------------------------------------------------------------------------------+
+| VALUE                                                                             |
+|-----------------------------------------------------------------------------------|
+| {                                                                                 |
+|   "Era": "Pre-Transition",                                                        |
+|   "Houses": [                                                                     |
+|     {                                                                             |
+|       "House": "Austria",                                                         |
+|       "Monarchs": [                                                               |
+|         {                                                                         |
+|           "Age at Time of Death": "71 years",                                     |
+|           "Birth": "1527-05-21",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": [                                            |
+|             "Maria I de Inglaterra",                                              |
+|             "Isabel de Valois",                                                   |
+|             "Ana de Austria"                                                      |
+|           ],                                                                      |
+|           "Death": "1598-09-13",                                                  |
+|           "Duration": "42 years and 240 days",                                    |
+|           "End of Reign": "1598-09-13",                                           |
+|           "Name": "Felipe II",                                                    |
+|           "Nickname": "el Prudente",                                              |
+|           "Place of Birth": "Valladolid",                                         |
+|           "Place of Death": "San Lorenzo de El Escorial",                         |
+|           "Start of Reign": "1556-01-16"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "42 years",                                     |
+|           "Birth": "1578-04-14",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Margarita de Austria",                      |
+|           "Death": "1621-03-31",                                                  |
+|           "Duration": "22 years and 199 days",                                    |
+|           "End of Reign": "1621-03-31",                                           |
+|           "Name": "Felipe III",                                                   |
+|           "Nickname": "el Piadoso",                                               |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1598-09-13"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "60 years",                                     |
+|           "Birth": "1605-04-08",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": [                                            |
+|             "Isabel de Borbon",                                                   |
+|             "Mariana de Austria"                                                  |
+|           ],                                                                      |
+|           "Death": "1665-09-17",                                                  |
+|           "Duration": "44 years and 170 days",                                    |
+|           "End of Reign": "1665-09-17",                                           |
+|           "Name": "Felipe IV",                                                    |
+|           "Nickname": [                                                           |
+|             "el Grande",                                                          |
+|             "el Rey Planeta"                                                      |
+|           ],                                                                      |
+|           "Place of Birth": "Valladolid",                                         |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1621-03-31"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "38 years",                                     |
+|           "Birth": "1661-11-06",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": [                                            |
+|             "Maria Luisa de Orleans",                                             |
+|             "Mariana de Neoburgo"                                                 |
+|           ],                                                                      |
+|           "Death": "1700-11-01",                                                  |
+|           "Duration": "35 years and 45 days",                                     |
+|           "End of Reign": "1700-11-01",                                           |
+|           "Name": "Carlos II",                                                    |
+|           "Nickname": "el Hechizado",                                             |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1665-09-17"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "55 years",                                     |
+|           "Birth": "1685-10-01",                                                  |
+|           "Burial Place": "Cripta Imperial de Viena",                             |
+|           "Consort\\/Queen Consort": "Isabel Cristina de Brunswick-Wolfenbuttel", |
+|           "Death": "1740-10-20",                                                  |
+|           "Duration": "11 years and 293 days",                                    |
+|           "End of Reign": "1715-07-02",                                           |
+|           "Name": "Archiduque Carlos",                                            |
+|           "Nickname": "el Archiduque",                                            |
+|           "Place of Birth": "Viena",                                              |
+|           "Place of Death": "Viena",                                              |
+|           "Start of Reign": "1703-09-12"                                          |
+|         }                                                                         |
+|       ]                                                                           |
+|     },                                                                            |
+|     {                                                                             |
+|       "House": "Bonaparte",                                                       |
+|       "Monarchs": [                                                               |
+|         {                                                                         |
+|           "Age at Time of Death": "76 years",                                     |
+|           "Birth": "1768-01-07",                                                  |
+|           "Burial Place": "Los Invalidos",                                        |
+|           "Consort\\/Queen Consort": "Julia Clary",                               |
+|           "Death": "1844-07-28",                                                  |
+|           "Duration": "5 years and 188 days",                                     |
+|           "End of Reign": "1813-12-11",                                           |
+|           "Name": "Jose I",                                                       |
+|           "Nickname": [                                                           |
+|             "Pepe Botella",                                                       |
+|             "Pepe Plazuelas",                                                     |
+|             "el Intruso"                                                          |
+|           ],                                                                      |
+|           "Place of Birth": "Corte",                                              |
+|           "Place of Death": "Florencia",                                          |
+|           "Start of Reign": "1808-06-06"                                          |
+|         }                                                                         |
+|       ]                                                                           |
+|     },                                                                            |
+|     {                                                                             |
+|       "House": "Borbon",                                                          |
+|       "Monarchs": [                                                               |
+|         {                                                                         |
+|           "Age at Time of Death": "62 years",                                     |
+|           "Birth": "1683-12-19",                                                  |
+|           "Burial Place": "Palacio Real de la Granja de San Ildefonso",           |
+|           "Consort\\/Queen Consort": [                                            |
+|             "Maria Luisa Gabriela de Saboya",                                     |
+|             "Isabel de Farnesio"                                                  |
+|           ],                                                                      |
+|           "Death": "1746-07-09",                                                  |
+|           "Duration": "23 years and 59 days",                                     |
+|           "End of Reign": "1724-01-14",                                           |
+|           "Name": "Felipe V",                                                     |
+|           "Nickname": [                                                           |
+|             "el Animoso"                                                          |
+|           ],                                                                      |
+|           "Place of Birth": "Versalles",                                          |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1700-11-16"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "17 years",                                     |
+|           "Birth": "1707-08-25",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Luisa Isabel de Orleans",                   |
+|           "Death": "1724-08-31",                                                  |
+|           "Duration": "230 days",                                                 |
+|           "End of Reign": "1724-08-31",                                           |
+|           "Name": "Luis I",                                                       |
+|           "Nickname": [                                                           |
+|             "el Bien Amado",                                                      |
+|             "el Liberal"                                                          |
+|           ],                                                                      |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1724-08-31"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "62 years",                                     |
+|           "Birth": "1683-12-19",                                                  |
+|           "Burial Place": "Palacio Real de la Granja de San Ildefonso",           |
+|           "Consort\\/Queen Consort": "Isabel de Farnesio",                        |
+|           "Death": "1746-07-09",                                                  |
+|           "Duration": "21 years and 306 days",                                    |
+|           "End of Reign": "1746-07-09",                                           |
+|           "Name": "Felipe V",                                                     |
+|           "Nickname": "el Animoso",                                               |
+|           "Place of Birth": "Versalles",                                          |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1724-09-06"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "45 years",                                     |
+|           "Birth": "1713-09-23",                                                  |
+|           "Burial Place": "Convento de las Salesas Reales",                       |
+|           "Consort\\/Queen Consort": "Barbara de Braganza",                       |
+|           "Death": "1759-08-10",                                                  |
+|           "Duration": "13 years and 32 days",                                     |
+|           "End of Reign": "1759-08-10",                                           |
+|           "Name": "Fernando VI",                                                  |
+|           "Nickname": [                                                           |
+|             "el Prudente",                                                        |
+|             "el Justo"                                                            |
+|           ],                                                                      |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Villaviciosa de Odon",                               |
+|           "Start of Reign": "1746-07-09"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "72 years",                                     |
+|           "Birth": "1716-01-20",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Maria Amalia de Sajonia",                   |
+|           "Death": "1788-12-14",                                                  |
+|           "Duration": "29 years and 126 days",                                    |
+|           "End of Reign": "1788-12-14",                                           |
+|           "Name": "Carlos III",                                                   |
+|           "Nickname": [                                                           |
+|             "el Politico",                                                        |
+|             "el Mejor Alcalde de Madrid"                                          |
+|           ],                                                                      |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1759-08-10"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "70 years",                                     |
+|           "Birth": "1748-11-11",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Maria Luisa de Parma",                      |
+|           "Death": "1819-01-19",                                                  |
+|           "Duration": "19 years and 96 days",                                     |
+|           "End of Reign": "1808-03-19",                                           |
+|           "Name": "Carlos IV",                                                    |
+|           "Nickname": "el Cazador",                                               |
+|           "Place of Birth": "Portici",                                            |
+|           "Place of Death": "Napoles",                                            |
+|           "Start of Reign": "1788-12-14"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "48 years",                                     |
+|           "Birth": "1784-10-14",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": [                                            |
+|             "Maria Isabel de Braganza",                                           |
+|             "Maria Josefa de Sajonia",                                            |
+|             "Maria Cristina de Borbon"                                            |
+|           ],                                                                      |
+|           "Death": "1833-09-29",                                                  |
+|           "Duration": "19 years and 148 days",                                    |
+|           "End of Reign": "1833-09-29",                                           |
+|           "Name": "Fernando VII",                                                 |
+|           "Nickname": [                                                           |
+|             "el Deseado",                                                         |
+|             "el Rey Felon"                                                        |
+|           ],                                                                      |
+|           "Place of Birth": "San Lorenzo de El Escorial",                         |
+|           "Place of Death": "Madrid",                                             |
+|           "Start of Reign": "1808-08-11"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "73 years",                                     |
+|           "Birth": "1830-10-10",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Francisco de Asis de Borbon",               |
+|           "Death": "1904-04-09",                                                  |
+|           "Duration": "35 years and 1 dia",                                       |
+|           "End of Reign": "1868-09-30",                                           |
+|           "Name": "Isabel II",                                                    |
+|           "Nickname": [                                                           |
+|             "la de los Tristes Destinos",                                         |
+|             "la Reina Castiza"                                                    |
+|           ],                                                                      |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Paris",                                              |
+|           "Start of Reign": "1833-09-29"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "27 years",                                     |
+|           "Birth": "1857-11-28",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": [                                            |
+|             "Maria de las Mercedes de Orleans",                                   |
+|             "Maria Cristina de Habsburgo-Lorena"                                  |
+|           ],                                                                      |
+|           "Death": "1885-11-25",                                                  |
+|           "Duration": "10 years and 331 days",                                    |
+|           "End of Reign": "1885-11-25",                                           |
+|           "Name": "Alfonso XII",                                                  |
+|           "Nickname": "el Pacificador",                                           |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "El Pardo",                                           |
+|           "Start of Reign": "1874-12-29"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "54 years",                                     |
+|           "Birth": "1886-05-17",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Victoria Eugenia de Battenberg",            |
+|           "Death": "1941-02-28",                                                  |
+|           "Duration": "44 years and 332 days",                                    |
+|           "End of Reign": "1931-04-14",                                           |
+|           "Name": "Alfonso XIII",                                                 |
+|           "Nickname": "el Africano",                                              |
+|           "Place of Birth": "Madrid",                                             |
+|           "Place of Death": "Roma",                                               |
+|           "Start of Reign": "1886-05-17"                                          |
+|         }                                                                         |
+|       ]                                                                           |
+|     },                                                                            |
+|     {                                                                             |
+|       "House": "Saboya",                                                          |
+|       "Monarchs": [                                                               |
+|         {                                                                         |
+|           "Age at Time of Death": "44 years",                                     |
+|           "Birth": "1845-05-30",                                                  |
+|           "Burial Place": "Basilica de Superga",                                  |
+|           "Consort\\/Queen Consort": "Maria Victoria dal Pozzo",                  |
+|           "Death": "1890-01-18",                                                  |
+|           "Duration": "2 years and 87 days",                                      |
+|           "End of Reign": "1873-02-11",                                           |
+|           "Name": "Amadeo I",                                                     |
+|           "Nickname": [                                                           |
+|             "el Rey Caballero",                                                   |
+|             "el Electo"                                                           |
+|           ],                                                                      |
+|           "Place of Birth": "Turin",                                              |
+|           "Place of Death": "Turin",                                              |
+|           "Start of Reign": "1870-11-16"                                          |
+|         }                                                                         |
+|       ]                                                                           |
+|     },                                                                            |
+|     {                                                                             |
+|       "House": "Trastamara",                                                      |
+|       "Monarchs": [                                                               |
+|         {                                                                         |
+|           "Age at Time of Death": "53 years",                                     |
+|           "Birth": "1451-04-22",                                                  |
+|           "Burial Place": "Capilla Real de Granada",                              |
+|           "Death": "1504-11-26",                                                  |
+|           "Duration": "29 years and 349 days",                                    |
+|           "End of Reign": "1504-11-26",                                           |
+|           "Name": "Isabel I de Castilla",                                         |
+|           "Nickname": "la Catolica",                                              |
+|           "Place of Birth": "Madrigal de las Altas Torres",                       |
+|           "Place of Death": "Medina del Campo",                                   |
+|           "Start of Reign": "1474-12-13"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "63 years",                                     |
+|           "Birth": "1452-03-10",                                                  |
+|           "Burial Place": "Capilla Real de Granada",                              |
+|           "Death": "1516-01-23",                                                  |
+|           "Duration": "29 years and 316 days",                                    |
+|           "End of Reign": "1504-11-26",                                           |
+|           "Name": "Fernando V de Castilla",                                       |
+|           "Nickname": "el Catolico",                                              |
+|           "Place of Birth": "Sos",                                                |
+|           "Place of Death": "Madrigalejo",                                        |
+|           "Start of Reign": "1475-01-15"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "63 years",                                     |
+|           "Birth": "1452-03-10",                                                  |
+|           "Burial Place": "Capilla Real de Granada",                              |
+|           "Consort\\/Queen Consort": "Isabel I de Castilla",                      |
+|           "Death": "1516-01-23",                                                  |
+|           "Duration": "37 years and 3 days",                                      |
+|           "End of Reign": "1516-01-23",                                           |
+|           "Name": "Fernando II de Aragon",                                        |
+|           "Nickname": "el Catolico",                                              |
+|           "Place of Birth": "Sos",                                                |
+|           "Place of Death": "Madrigalejo",                                        |
+|           "Start of Reign": "1479-01-20"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "75 years",                                     |
+|           "Birth": "1479-11-06",                                                  |
+|           "Burial Place": "Capilla Real de Granada",                              |
+|           "Consort\\/Queen Consort": "Felipe I de Castilla",                      |
+|           "Death": "1555-04-12",                                                  |
+|           "Duration": "50 years and 137 days",                                    |
+|           "End of Reign": "1555-04-12",                                           |
+|           "Name": "Juana I de Castilla",                                          |
+|           "Nickname": "la Loca",                                                  |
+|           "Place of Birth": "Toledo",                                             |
+|           "Place of Death": "Tordesillas",                                        |
+|           "Start of Reign": "1504-11-26"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "75 years",                                     |
+|           "Birth": "1479-11-06",                                                  |
+|           "Burial Place": "Capilla Real de Granada",                              |
+|           "Death": "1555-04-12",                                                  |
+|           "Duration": "39 years and 79 days",                                     |
+|           "End of Reign": "1555-04-12",                                           |
+|           "Name": "Juana I de Aragon",                                            |
+|           "Nickname": "la Loca",                                                  |
+|           "Place of Birth": "Toledo",                                             |
+|           "Place of Death": "Tordesillas",                                        |
+|           "Start of Reign": "1516-01-23"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "28 years",                                     |
+|           "Birth": "1478-06-22",                                                  |
+|           "Burial Place": "Capilla Real de Granada",                              |
+|           "Death": "1506-09-25",                                                  |
+|           "Duration": "75 days",                                                  |
+|           "End of Reign": "1506-09-25",                                           |
+|           "Name": "Felipe I de Castilla",                                         |
+|           "Nickname": "el Hermoso",                                               |
+|           "Place of Birth": "Brujas",                                             |
+|           "Place of Death": "Burgos",                                             |
+|           "Start of Reign": "1506-07-12"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Age at Time of Death": "58 years",                                     |
+|           "Birth": "1500-02-24",                                                  |
+|           "Burial Place": "Cripta Real del Monasterio de El Escorial",            |
+|           "Consort\\/Queen Consort": "Isabel de Portugal",                        |
+|           "Death": "1558-09-21",                                                  |
+|           "Duration": "39 years and 308 days",                                    |
+|           "End of Reign": "1556-01-16",                                           |
+|           "Name": "Carlos I",                                                     |
+|           "Nickname": "el Cesar",                                                 |
+|           "Place of Birth": "Gante",                                              |
+|           "Place of Death": "Cuacos de Yuste",                                    |
+|           "Start of Reign": "1516-03-14"                                          |
+|         }                                                                         |
+|       ]                                                                           |
+|     }                                                                             |
+|   ]                                                                               |
+| }                                                                                 |
+| {                                                                                 |
+|   "Era": "Post-Transition",                                                       |
+|   "Houses": [                                                                     |
+|     {                                                                             |
+|       "House": "Borbon",                                                          |
+|       "Monarchs": [                                                               |
+|         {                                                                         |
+|           "Birth": "1938-01-05",                                                  |
+|           "Consort\\/Queen Consort": "Sofia de Grecia",                           |
+|           "Duration": "38 years and 192 days",                                    |
+|           "End of Reign": "2014-06-18",                                           |
+|           "Name": "Juan Carlos I",                                                |
+|           "Place of Birth": "Roma",                                               |
+|           "Start of Reign": "1975-11-22"                                          |
+|         },                                                                        |
+|         {                                                                         |
+|           "Birth": "1968-01-30",                                                  |
+|           "Consort\\/Queen Consort": "Letizia Ortiz",                             |
+|           "Duration": "7 years and 140 days",                                     |
+|           "Name": "Felipe VI",                                                    |
+|           "Place of Birth": "Madrid",                                             |
+|           "Start of Reign": "2014-06-19"                                          |
+|         }                                                                         |
+|       ]                                                                           |
+|     }                                                                             |
+|   ]                                                                               |
+| }                                                                                 |
++-----------------------------------------------------------------------------------+
+2 Row(s) produced. Time Elapsed: 0.197s
+create or replace temp table challenge_4_result as
+select
+    row_number() over (order by Monarchs.value:"Birth"::date) as ID,
+    Monarchs.index + 1 as INTER_HOUSE_ID, -- 配列にある要素のインデックス cf. https://docs.snowflake.com/ja/sql-reference/functions/flatten#output
+    c.value:Era::string as ERA,
+    houses.value:House::string as House,
+    Monarchs.value:"Name"::string as NAME,
+    case
+        when Monarchs.value:"Nickname"[0]::string is not null then Monarchs.value:"Nickname"[0]::string 
+        else Monarchs.value:"Nickname"::string 
+    end as NICKNAME_1,
+    Monarchs.value:"Nickname"[1]::string as NICKNAME_2,
+    Monarchs.value:"Nickname"[2]::string as NICKNAME_3,
+    Monarchs.value:"Birth"::string as BIRTH,
+    Monarchs.value:"Place of Birth"::string as PLACE_OF_BIRTH,
+    Monarchs.value:"Start of Reign"::string as START_OF_REIGN,
+    case
+        when Monarchs.value:"Consort\/Queen Consort"[0]::string is not null then Monarchs.value:"Consort\/Queen Consort"[0]::string 
+        else Monarchs.value:"Consort\/Queen Consort"::string 
+    end as QUEEN_OR_QUEEN_CONSORT_1,
+    Monarchs.value:"Consort\/Queen Consort"[1]::string as QUEEN_OR_QUEEN_CONSORT_2,
+    Monarchs.value:"Consort\/Queen Consort"[2]::string as QUEEN_OR_QUEEN_CONSORT_3,
+    Monarchs.value:"End of Reign"::string as END_OF_REIGN,
+    Monarchs.value:"Duration"::string as DURATION,
+    Monarchs.value:"Death"::string as DEATH,
+    Monarchs.value:"Age at Time of Death"::string as AGE_AT_TIME_OF_DEATH_YEARS,
+    Monarchs.value:"Place of Death"::string as PLACE_OF_DEATH,
+    Monarchs.value:"Burial Place"::string as BURIAL_PLACE,
+from
+    challenge_4_load as c,
+    lateral flatten (input => c.value:"Houses") houses,
+    lateral flatten (input => houses.value:"Monarchs") Monarchs
+order by
+    ID;
++------------------------------------------------+
+| status                                         |
+|------------------------------------------------|
+| Table CHALLENGE_4_RESULT successfully created. |
++------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.993s
+table challenge_4_result;
++----+----------------+-----------------+------------+------------------------+----------------------------+----------------------------+------------+------------+------------------------------+----------------+-------------------------------------------+------------------------------------+--------------------------+--------------+-----------------------+------------+----------------------------+----------------------------+--------------------------------------------+
+| ID | INTER_HOUSE_ID | ERA             | HOUSE      | NAME                   | NICKNAME_1                 | NICKNAME_2                 | NICKNAME_3 | BIRTH      | PLACE_OF_BIRTH               | START_OF_REIGN | QUEEN_OR_QUEEN_CONSORT_1                  | QUEEN_OR_QUEEN_CONSORT_2           | QUEEN_OR_QUEEN_CONSORT_3 | END_OF_REIGN | DURATION              | DEATH      | AGE_AT_TIME_OF_DEATH_YEARS | PLACE_OF_DEATH             | BURIAL_PLACE                               |
+|----+----------------+-----------------+------------+------------------------+----------------------------+----------------------------+------------+------------+------------------------------+----------------+-------------------------------------------+------------------------------------+--------------------------+--------------+-----------------------+------------+----------------------------+----------------------------+--------------------------------------------|
+|  1 |              1 | Pre-Transition  | Trastamara | Isabel I de Castilla   | la Catolica                | NULL                       | NULL       | 1451-04-22 | Madrigal de las Altas Torres | 1474-12-13     | NULL                                      | NULL                               | NULL                     | 1504-11-26   | 29 years and 349 days | 1504-11-26 | 53 years                   | Medina del Campo           | Capilla Real de Granada                    |
+|  2 |              3 | Pre-Transition  | Trastamara | Fernando II de Aragon  | el Catolico                | NULL                       | NULL       | 1452-03-10 | Sos                          | 1479-01-20     | Isabel I de Castilla                      | NULL                               | NULL                     | 1516-01-23   | 37 years and 3 days   | 1516-01-23 | 63 years                   | Madrigalejo                | Capilla Real de Granada                    |
+|  3 |              2 | Pre-Transition  | Trastamara | Fernando V de Castilla | el Catolico                | NULL                       | NULL       | 1452-03-10 | Sos                          | 1475-01-15     | NULL                                      | NULL                               | NULL                     | 1504-11-26   | 29 years and 316 days | 1516-01-23 | 63 years                   | Madrigalejo                | Capilla Real de Granada                    |
+|  4 |              6 | Pre-Transition  | Trastamara | Felipe I de Castilla   | el Hermoso                 | NULL                       | NULL       | 1478-06-22 | Brujas                       | 1506-07-12     | NULL                                      | NULL                               | NULL                     | 1506-09-25   | 75 days               | 1506-09-25 | 28 years                   | Burgos                     | Capilla Real de Granada                    |
+|  5 |              4 | Pre-Transition  | Trastamara | Juana I de Castilla    | la Loca                    | NULL                       | NULL       | 1479-11-06 | Toledo                       | 1504-11-26     | Felipe I de Castilla                      | NULL                               | NULL                     | 1555-04-12   | 50 years and 137 days | 1555-04-12 | 75 years                   | Tordesillas                | Capilla Real de Granada                    |
+|  6 |              5 | Pre-Transition  | Trastamara | Juana I de Aragon      | la Loca                    | NULL                       | NULL       | 1479-11-06 | Toledo                       | 1516-01-23     | NULL                                      | NULL                               | NULL                     | 1555-04-12   | 39 years and 79 days  | 1555-04-12 | 75 years                   | Tordesillas                | Capilla Real de Granada                    |
+|  7 |              7 | Pre-Transition  | Trastamara | Carlos I               | el Cesar                   | NULL                       | NULL       | 1500-02-24 | Gante                        | 1516-03-14     | Isabel de Portugal                        | NULL                               | NULL                     | 1556-01-16   | 39 years and 308 days | 1558-09-21 | 58 years                   | Cuacos de Yuste            | Cripta Real del Monasterio de El Escorial  |
+|  8 |              1 | Pre-Transition  | Austria    | Felipe II              | el Prudente                | NULL                       | NULL       | 1527-05-21 | Valladolid                   | 1556-01-16     | Maria I de Inglaterra                     | Isabel de Valois                   | Ana de Austria           | 1598-09-13   | 42 years and 240 days | 1598-09-13 | 71 years                   | San Lorenzo de El Escorial | Cripta Real del Monasterio de El Escorial  |
+|  9 |              2 | Pre-Transition  | Austria    | Felipe III             | el Piadoso                 | NULL                       | NULL       | 1578-04-14 | Madrid                       | 1598-09-13     | Margarita de Austria                      | NULL                               | NULL                     | 1621-03-31   | 22 years and 199 days | 1621-03-31 | 42 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 10 |              3 | Pre-Transition  | Austria    | Felipe IV              | el Grande                  | el Rey Planeta             | NULL       | 1605-04-08 | Valladolid                   | 1621-03-31     | Isabel de Borbon                          | Mariana de Austria                 | NULL                     | 1665-09-17   | 44 years and 170 days | 1665-09-17 | 60 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 11 |              4 | Pre-Transition  | Austria    | Carlos II              | el Hechizado               | NULL                       | NULL       | 1661-11-06 | Madrid                       | 1665-09-17     | Maria Luisa de Orleans                    | Mariana de Neoburgo                | NULL                     | 1700-11-01   | 35 years and 45 days  | 1700-11-01 | 38 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 12 |              3 | Pre-Transition  | Borbon     | Felipe V               | el Animoso                 | NULL                       | NULL       | 1683-12-19 | Versalles                    | 1724-09-06     | Isabel de Farnesio                        | NULL                               | NULL                     | 1746-07-09   | 21 years and 306 days | 1746-07-09 | 62 years                   | Madrid                     | Palacio Real de la Granja de San Ildefonso |
+| 13 |              1 | Pre-Transition  | Borbon     | Felipe V               | el Animoso                 | NULL                       | NULL       | 1683-12-19 | Versalles                    | 1700-11-16     | Maria Luisa Gabriela de Saboya            | Isabel de Farnesio                 | NULL                     | 1724-01-14   | 23 years and 59 days  | 1746-07-09 | 62 years                   | Madrid                     | Palacio Real de la Granja de San Ildefonso |
+| 14 |              5 | Pre-Transition  | Austria    | Archiduque Carlos      | el Archiduque              | NULL                       | NULL       | 1685-10-01 | Viena                        | 1703-09-12     | Isabel Cristina de Brunswick-Wolfenbuttel | NULL                               | NULL                     | 1715-07-02   | 11 years and 293 days | 1740-10-20 | 55 years                   | Viena                      | Cripta Imperial de Viena                   |
+| 15 |              2 | Pre-Transition  | Borbon     | Luis I                 | el Bien Amado              | el Liberal                 | NULL       | 1707-08-25 | Madrid                       | 1724-08-31     | Luisa Isabel de Orleans                   | NULL                               | NULL                     | 1724-08-31   | 230 days              | 1724-08-31 | 17 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 16 |              4 | Pre-Transition  | Borbon     | Fernando VI            | el Prudente                | el Justo                   | NULL       | 1713-09-23 | Madrid                       | 1746-07-09     | Barbara de Braganza                       | NULL                               | NULL                     | 1759-08-10   | 13 years and 32 days  | 1759-08-10 | 45 years                   | Villaviciosa de Odon       | Convento de las Salesas Reales             |
+| 17 |              5 | Pre-Transition  | Borbon     | Carlos III             | el Politico                | el Mejor Alcalde de Madrid | NULL       | 1716-01-20 | Madrid                       | 1759-08-10     | Maria Amalia de Sajonia                   | NULL                               | NULL                     | 1788-12-14   | 29 years and 126 days | 1788-12-14 | 72 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 18 |              6 | Pre-Transition  | Borbon     | Carlos IV              | el Cazador                 | NULL                       | NULL       | 1748-11-11 | Portici                      | 1788-12-14     | Maria Luisa de Parma                      | NULL                               | NULL                     | 1808-03-19   | 19 years and 96 days  | 1819-01-19 | 70 years                   | Napoles                    | Cripta Real del Monasterio de El Escorial  |
+| 19 |              1 | Pre-Transition  | Bonaparte  | Jose I                 | Pepe Botella               | Pepe Plazuelas             | el Intruso | 1768-01-07 | Corte                        | 1808-06-06     | Julia Clary                               | NULL                               | NULL                     | 1813-12-11   | 5 years and 188 days  | 1844-07-28 | 76 years                   | Florencia                  | Los Invalidos                              |
+| 20 |              7 | Pre-Transition  | Borbon     | Fernando VII           | el Deseado                 | el Rey Felon               | NULL       | 1784-10-14 | San Lorenzo de El Escorial   | 1808-08-11     | Maria Isabel de Braganza                  | Maria Josefa de Sajonia            | Maria Cristina de Borbon | 1833-09-29   | 19 years and 148 days | 1833-09-29 | 48 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 21 |              8 | Pre-Transition  | Borbon     | Isabel II              | la de los Tristes Destinos | la Reina Castiza           | NULL       | 1830-10-10 | Madrid                       | 1833-09-29     | Francisco de Asis de Borbon               | NULL                               | NULL                     | 1868-09-30   | 35 years and 1 dia    | 1904-04-09 | 73 years                   | Paris                      | Cripta Real del Monasterio de El Escorial  |
+| 22 |              1 | Pre-Transition  | Saboya     | Amadeo I               | el Rey Caballero           | el Electo                  | NULL       | 1845-05-30 | Turin                        | 1870-11-16     | Maria Victoria dal Pozzo                  | NULL                               | NULL                     | 1873-02-11   | 2 years and 87 days   | 1890-01-18 | 44 years                   | Turin                      | Basilica de Superga                        |
+| 23 |              9 | Pre-Transition  | Borbon     | Alfonso XII            | el Pacificador             | NULL                       | NULL       | 1857-11-28 | Madrid                       | 1874-12-29     | Maria de las Mercedes de Orleans          | Maria Cristina de Habsburgo-Lorena | NULL                     | 1885-11-25   | 10 years and 331 days | 1885-11-25 | 27 years                   | El Pardo                   | Cripta Real del Monasterio de El Escorial  |
+| 24 |             10 | Pre-Transition  | Borbon     | Alfonso XIII           | el Africano                | NULL                       | NULL       | 1886-05-17 | Madrid                       | 1886-05-17     | Victoria Eugenia de Battenberg            | NULL                               | NULL                     | 1931-04-14   | 44 years and 332 days | 1941-02-28 | 54 years                   | Roma                       | Cripta Real del Monasterio de El Escorial  |
+| 25 |              1 | Post-Transition | Borbon     | Juan Carlos I          | NULL                       | NULL                       | NULL       | 1938-01-05 | Roma                         | 1975-11-22     | Sofia de Grecia                           | NULL                               | NULL                     | 2014-06-18   | 38 years and 192 days | NULL       | NULL                       | NULL                       | NULL                                       |
+| 26 |              2 | Post-Transition | Borbon     | Felipe VI              | NULL                       | NULL                       | NULL       | 1968-01-30 | Madrid                       | 2014-06-19     | Letizia Ortiz                             | NULL                               | NULL                     | NULL         | 7 years and 140 days  | NULL       | NULL                       | NULL                       | NULL                                       |
++----+----------------+-----------------+------------+------------------------+----------------------------+----------------------------+------------+------------+------------------------------+----------------+-------------------------------------------+------------------------------------+--------------------------+--------------+-----------------------+------------+----------------------------+----------------------------+--------------------------------------------+
+26 Row(s) produced. Time Elapsed: 0.167s
+-------------------------------------------------------------------------------------------
+-- 
+-- パターン2
+-- 
+-- COPY INTO（＋INCLUDE_METADATA オプション） パターン
+-- 
+
+create or replace temp table challenge_4_load
+    using template (
+        select
+            array_cat(
+                array_agg(object_construct(*)),
+                -- cf. https://qiita.com/friedaji/items/9d25cfb071de5792f0d1
+                [
+                    -- FILE_NAMEカラム
+                    {
+                        'COLUMN_NAME': 'FILE_NAME',
+                        'filenames': '',
+                        'NULLABLE': true,
+                        'TYPE': 'text'
+                    },
+                    -- ROW_NUMBERカラム
+                    {
+                        'COLUMN_NAME': 'ROW_NUMBER',
+                        'filenames': '',
+                        'NULLABLE': true,
+                        'TYPE': 'number'
+                    }
+                ]::VARIANT
+            )
+        from
+            table(
+            infer_schema(
+                location=>'@frosty_friday_stage'
+                , file_format=>'challenge_4_format'
+            )
+        )
+    )
+;
++----------------------------------------------+
+| status                                       |
+|----------------------------------------------|
+| Table CHALLENGE_4_LOAD successfully created. |
++----------------------------------------------+
+1 Row(s) produced. Time Elapsed: 1.751s
+table challenge_4_load;
++-----+--------+-----------+------------+
+| Era | Houses | FILE_NAME | ROW_NUMBER |
+|-----+--------+-----------+------------|
++-----+--------+-----------+------------+
+-- COPY INTO（＋INCLUDE_METADATA オプション）
+copy into
+    challenge_4_load
+from
+    @frosty_friday_stage
+match_by_column_name = case_sensitive
+file_format = (
+    format_name = 'challenge_4_format'
+)
+-- cf. https://docs.snowflake.com/en/release-notes/2024/8_17#new-copy-option-include-metadata
+include_metadata = (
+    row_number = metadata$file_row_number,
+    file_name = METADATA$FILENAME
+);
++---------------------------------------------------------------+--------+-------------+-------------+-------------+-------------+-------------+------------------+-----------------------+-------------------------+
+| file                                                          | status | rows_parsed | rows_loaded | error_limit | errors_seen | first_error | first_error_line | first_error_character | first_error_column_name |
+|---------------------------------------------------------------+--------+-------------+-------------+-------------+-------------+-------------+------------------+-----------------------+-------------------------|
+| s3://frostyfridaychallenges/challenge_4/Spanish_Monarchs.json | LOADED |           2 |           2 |           1 |           0 | NULL        |             NULL |                  NULL | NULL                    |
++---------------------------------------------------------------+--------+-------------+-------------+-------------+-------------+-------------+------------------+-----------------------+-------------------------+
+1 Row(s) produced. Time Elapsed: 2.844s
+table challenge_4_load;
++-----------------+---------------------------------------------------------------------------------+-----------------------------------+------------+
+| Era             | Houses                                                                          | FILE_NAME                         | ROW_NUMBER |
+|-----------------+---------------------------------------------------------------------------------+-----------------------------------+------------|
+| Pre-Transition  | [                                                                               | challenge_4/Spanish_Monarchs.json |          1 |
+|                 |   {                                                                             |                                   |            |
+|                 |     "House": "Austria",                                                         |                                   |            |
+|                 |     "Monarchs": [                                                               |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "71 years",                                     |                                   |            |
+|                 |         "Birth": "1527-05-21",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": [                                            |                                   |            |
+|                 |           "Maria I de Inglaterra",                                              |                                   |            |
+|                 |           "Isabel de Valois",                                                   |                                   |            |
+|                 |           "Ana de Austria"                                                      |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Death": "1598-09-13",                                                  |                                   |            |
+|                 |         "Duration": "42 years and 240 days",                                    |                                   |            |
+|                 |         "End of Reign": "1598-09-13",                                           |                                   |            |
+|                 |         "Name": "Felipe II",                                                    |                                   |            |
+|                 |         "Nickname": "el Prudente",                                              |                                   |            |
+|                 |         "Place of Birth": "Valladolid",                                         |                                   |            |
+|                 |         "Place of Death": "San Lorenzo de El Escorial",                         |                                   |            |
+|                 |         "Start of Reign": "1556-01-16"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "42 years",                                     |                                   |            |
+|                 |         "Birth": "1578-04-14",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Margarita de Austria",                      |                                   |            |
+|                 |         "Death": "1621-03-31",                                                  |                                   |            |
+|                 |         "Duration": "22 years and 199 days",                                    |                                   |            |
+|                 |         "End of Reign": "1621-03-31",                                           |                                   |            |
+|                 |         "Name": "Felipe III",                                                   |                                   |            |
+|                 |         "Nickname": "el Piadoso",                                               |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1598-09-13"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "60 years",                                     |                                   |            |
+|                 |         "Birth": "1605-04-08",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": [                                            |                                   |            |
+|                 |           "Isabel de Borbon",                                                   |                                   |            |
+|                 |           "Mariana de Austria"                                                  |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Death": "1665-09-17",                                                  |                                   |            |
+|                 |         "Duration": "44 years and 170 days",                                    |                                   |            |
+|                 |         "End of Reign": "1665-09-17",                                           |                                   |            |
+|                 |         "Name": "Felipe IV",                                                    |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Grande",                                                          |                                   |            |
+|                 |           "el Rey Planeta"                                                      |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Valladolid",                                         |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1621-03-31"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "38 years",                                     |                                   |            |
+|                 |         "Birth": "1661-11-06",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": [                                            |                                   |            |
+|                 |           "Maria Luisa de Orleans",                                             |                                   |            |
+|                 |           "Mariana de Neoburgo"                                                 |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Death": "1700-11-01",                                                  |                                   |            |
+|                 |         "Duration": "35 years and 45 days",                                     |                                   |            |
+|                 |         "End of Reign": "1700-11-01",                                           |                                   |            |
+|                 |         "Name": "Carlos II",                                                    |                                   |            |
+|                 |         "Nickname": "el Hechizado",                                             |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1665-09-17"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "55 years",                                     |                                   |            |
+|                 |         "Birth": "1685-10-01",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Imperial de Viena",                             |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Isabel Cristina de Brunswick-Wolfenbuttel", |                                   |            |
+|                 |         "Death": "1740-10-20",                                                  |                                   |            |
+|                 |         "Duration": "11 years and 293 days",                                    |                                   |            |
+|                 |         "End of Reign": "1715-07-02",                                           |                                   |            |
+|                 |         "Name": "Archiduque Carlos",                                            |                                   |            |
+|                 |         "Nickname": "el Archiduque",                                            |                                   |            |
+|                 |         "Place of Birth": "Viena",                                              |                                   |            |
+|                 |         "Place of Death": "Viena",                                              |                                   |            |
+|                 |         "Start of Reign": "1703-09-12"                                          |                                   |            |
+|                 |       }                                                                         |                                   |            |
+|                 |     ]                                                                           |                                   |            |
+|                 |   },                                                                            |                                   |            |
+|                 |   {                                                                             |                                   |            |
+|                 |     "House": "Bonaparte",                                                       |                                   |            |
+|                 |     "Monarchs": [                                                               |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "76 years",                                     |                                   |            |
+|                 |         "Birth": "1768-01-07",                                                  |                                   |            |
+|                 |         "Burial Place": "Los Invalidos",                                        |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Julia Clary",                               |                                   |            |
+|                 |         "Death": "1844-07-28",                                                  |                                   |            |
+|                 |         "Duration": "5 years and 188 days",                                     |                                   |            |
+|                 |         "End of Reign": "1813-12-11",                                           |                                   |            |
+|                 |         "Name": "Jose I",                                                       |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "Pepe Botella",                                                       |                                   |            |
+|                 |           "Pepe Plazuelas",                                                     |                                   |            |
+|                 |           "el Intruso"                                                          |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Corte",                                              |                                   |            |
+|                 |         "Place of Death": "Florencia",                                          |                                   |            |
+|                 |         "Start of Reign": "1808-06-06"                                          |                                   |            |
+|                 |       }                                                                         |                                   |            |
+|                 |     ]                                                                           |                                   |            |
+|                 |   },                                                                            |                                   |            |
+|                 |   {                                                                             |                                   |            |
+|                 |     "House": "Borbon",                                                          |                                   |            |
+|                 |     "Monarchs": [                                                               |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "62 years",                                     |                                   |            |
+|                 |         "Birth": "1683-12-19",                                                  |                                   |            |
+|                 |         "Burial Place": "Palacio Real de la Granja de San Ildefonso",           |                                   |            |
+|                 |         "Consort\\/Queen Consort": [                                            |                                   |            |
+|                 |           "Maria Luisa Gabriela de Saboya",                                     |                                   |            |
+|                 |           "Isabel de Farnesio"                                                  |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Death": "1746-07-09",                                                  |                                   |            |
+|                 |         "Duration": "23 years and 59 days",                                     |                                   |            |
+|                 |         "End of Reign": "1724-01-14",                                           |                                   |            |
+|                 |         "Name": "Felipe V",                                                     |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Animoso"                                                          |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Versalles",                                          |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1700-11-16"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "17 years",                                     |                                   |            |
+|                 |         "Birth": "1707-08-25",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Luisa Isabel de Orleans",                   |                                   |            |
+|                 |         "Death": "1724-08-31",                                                  |                                   |            |
+|                 |         "Duration": "230 days",                                                 |                                   |            |
+|                 |         "End of Reign": "1724-08-31",                                           |                                   |            |
+|                 |         "Name": "Luis I",                                                       |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Bien Amado",                                                      |                                   |            |
+|                 |           "el Liberal"                                                          |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1724-08-31"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "62 years",                                     |                                   |            |
+|                 |         "Birth": "1683-12-19",                                                  |                                   |            |
+|                 |         "Burial Place": "Palacio Real de la Granja de San Ildefonso",           |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Isabel de Farnesio",                        |                                   |            |
+|                 |         "Death": "1746-07-09",                                                  |                                   |            |
+|                 |         "Duration": "21 years and 306 days",                                    |                                   |            |
+|                 |         "End of Reign": "1746-07-09",                                           |                                   |            |
+|                 |         "Name": "Felipe V",                                                     |                                   |            |
+|                 |         "Nickname": "el Animoso",                                               |                                   |            |
+|                 |         "Place of Birth": "Versalles",                                          |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1724-09-06"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "45 years",                                     |                                   |            |
+|                 |         "Birth": "1713-09-23",                                                  |                                   |            |
+|                 |         "Burial Place": "Convento de las Salesas Reales",                       |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Barbara de Braganza",                       |                                   |            |
+|                 |         "Death": "1759-08-10",                                                  |                                   |            |
+|                 |         "Duration": "13 years and 32 days",                                     |                                   |            |
+|                 |         "End of Reign": "1759-08-10",                                           |                                   |            |
+|                 |         "Name": "Fernando VI",                                                  |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Prudente",                                                        |                                   |            |
+|                 |           "el Justo"                                                            |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Villaviciosa de Odon",                               |                                   |            |
+|                 |         "Start of Reign": "1746-07-09"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "72 years",                                     |                                   |            |
+|                 |         "Birth": "1716-01-20",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Maria Amalia de Sajonia",                   |                                   |            |
+|                 |         "Death": "1788-12-14",                                                  |                                   |            |
+|                 |         "Duration": "29 years and 126 days",                                    |                                   |            |
+|                 |         "End of Reign": "1788-12-14",                                           |                                   |            |
+|                 |         "Name": "Carlos III",                                                   |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Politico",                                                        |                                   |            |
+|                 |           "el Mejor Alcalde de Madrid"                                          |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1759-08-10"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "70 years",                                     |                                   |            |
+|                 |         "Birth": "1748-11-11",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Maria Luisa de Parma",                      |                                   |            |
+|                 |         "Death": "1819-01-19",                                                  |                                   |            |
+|                 |         "Duration": "19 years and 96 days",                                     |                                   |            |
+|                 |         "End of Reign": "1808-03-19",                                           |                                   |            |
+|                 |         "Name": "Carlos IV",                                                    |                                   |            |
+|                 |         "Nickname": "el Cazador",                                               |                                   |            |
+|                 |         "Place of Birth": "Portici",                                            |                                   |            |
+|                 |         "Place of Death": "Napoles",                                            |                                   |            |
+|                 |         "Start of Reign": "1788-12-14"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "48 years",                                     |                                   |            |
+|                 |         "Birth": "1784-10-14",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": [                                            |                                   |            |
+|                 |           "Maria Isabel de Braganza",                                           |                                   |            |
+|                 |           "Maria Josefa de Sajonia",                                            |                                   |            |
+|                 |           "Maria Cristina de Borbon"                                            |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Death": "1833-09-29",                                                  |                                   |            |
+|                 |         "Duration": "19 years and 148 days",                                    |                                   |            |
+|                 |         "End of Reign": "1833-09-29",                                           |                                   |            |
+|                 |         "Name": "Fernando VII",                                                 |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Deseado",                                                         |                                   |            |
+|                 |           "el Rey Felon"                                                        |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "San Lorenzo de El Escorial",                         |                                   |            |
+|                 |         "Place of Death": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "1808-08-11"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "73 years",                                     |                                   |            |
+|                 |         "Birth": "1830-10-10",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Francisco de Asis de Borbon",               |                                   |            |
+|                 |         "Death": "1904-04-09",                                                  |                                   |            |
+|                 |         "Duration": "35 years and 1 dia",                                       |                                   |            |
+|                 |         "End of Reign": "1868-09-30",                                           |                                   |            |
+|                 |         "Name": "Isabel II",                                                    |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "la de los Tristes Destinos",                                         |                                   |            |
+|                 |           "la Reina Castiza"                                                    |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Paris",                                              |                                   |            |
+|                 |         "Start of Reign": "1833-09-29"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "27 years",                                     |                                   |            |
+|                 |         "Birth": "1857-11-28",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": [                                            |                                   |            |
+|                 |           "Maria de las Mercedes de Orleans",                                   |                                   |            |
+|                 |           "Maria Cristina de Habsburgo-Lorena"                                  |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Death": "1885-11-25",                                                  |                                   |            |
+|                 |         "Duration": "10 years and 331 days",                                    |                                   |            |
+|                 |         "End of Reign": "1885-11-25",                                           |                                   |            |
+|                 |         "Name": "Alfonso XII",                                                  |                                   |            |
+|                 |         "Nickname": "el Pacificador",                                           |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "El Pardo",                                           |                                   |            |
+|                 |         "Start of Reign": "1874-12-29"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "54 years",                                     |                                   |            |
+|                 |         "Birth": "1886-05-17",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Victoria Eugenia de Battenberg",            |                                   |            |
+|                 |         "Death": "1941-02-28",                                                  |                                   |            |
+|                 |         "Duration": "44 years and 332 days",                                    |                                   |            |
+|                 |         "End of Reign": "1931-04-14",                                           |                                   |            |
+|                 |         "Name": "Alfonso XIII",                                                 |                                   |            |
+|                 |         "Nickname": "el Africano",                                              |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Place of Death": "Roma",                                               |                                   |            |
+|                 |         "Start of Reign": "1886-05-17"                                          |                                   |            |
+|                 |       }                                                                         |                                   |            |
+|                 |     ]                                                                           |                                   |            |
+|                 |   },                                                                            |                                   |            |
+|                 |   {                                                                             |                                   |            |
+|                 |     "House": "Saboya",                                                          |                                   |            |
+|                 |     "Monarchs": [                                                               |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "44 years",                                     |                                   |            |
+|                 |         "Birth": "1845-05-30",                                                  |                                   |            |
+|                 |         "Burial Place": "Basilica de Superga",                                  |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Maria Victoria dal Pozzo",                  |                                   |            |
+|                 |         "Death": "1890-01-18",                                                  |                                   |            |
+|                 |         "Duration": "2 years and 87 days",                                      |                                   |            |
+|                 |         "End of Reign": "1873-02-11",                                           |                                   |            |
+|                 |         "Name": "Amadeo I",                                                     |                                   |            |
+|                 |         "Nickname": [                                                           |                                   |            |
+|                 |           "el Rey Caballero",                                                   |                                   |            |
+|                 |           "el Electo"                                                           |                                   |            |
+|                 |         ],                                                                      |                                   |            |
+|                 |         "Place of Birth": "Turin",                                              |                                   |            |
+|                 |         "Place of Death": "Turin",                                              |                                   |            |
+|                 |         "Start of Reign": "1870-11-16"                                          |                                   |            |
+|                 |       }                                                                         |                                   |            |
+|                 |     ]                                                                           |                                   |            |
+|                 |   },                                                                            |                                   |            |
+|                 |   {                                                                             |                                   |            |
+|                 |     "House": "Trastamara",                                                      |                                   |            |
+|                 |     "Monarchs": [                                                               |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "53 years",                                     |                                   |            |
+|                 |         "Birth": "1451-04-22",                                                  |                                   |            |
+|                 |         "Burial Place": "Capilla Real de Granada",                              |                                   |            |
+|                 |         "Death": "1504-11-26",                                                  |                                   |            |
+|                 |         "Duration": "29 years and 349 days",                                    |                                   |            |
+|                 |         "End of Reign": "1504-11-26",                                           |                                   |            |
+|                 |         "Name": "Isabel I de Castilla",                                         |                                   |            |
+|                 |         "Nickname": "la Catolica",                                              |                                   |            |
+|                 |         "Place of Birth": "Madrigal de las Altas Torres",                       |                                   |            |
+|                 |         "Place of Death": "Medina del Campo",                                   |                                   |            |
+|                 |         "Start of Reign": "1474-12-13"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "63 years",                                     |                                   |            |
+|                 |         "Birth": "1452-03-10",                                                  |                                   |            |
+|                 |         "Burial Place": "Capilla Real de Granada",                              |                                   |            |
+|                 |         "Death": "1516-01-23",                                                  |                                   |            |
+|                 |         "Duration": "29 years and 316 days",                                    |                                   |            |
+|                 |         "End of Reign": "1504-11-26",                                           |                                   |            |
+|                 |         "Name": "Fernando V de Castilla",                                       |                                   |            |
+|                 |         "Nickname": "el Catolico",                                              |                                   |            |
+|                 |         "Place of Birth": "Sos",                                                |                                   |            |
+|                 |         "Place of Death": "Madrigalejo",                                        |                                   |            |
+|                 |         "Start of Reign": "1475-01-15"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "63 years",                                     |                                   |            |
+|                 |         "Birth": "1452-03-10",                                                  |                                   |            |
+|                 |         "Burial Place": "Capilla Real de Granada",                              |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Isabel I de Castilla",                      |                                   |            |
+|                 |         "Death": "1516-01-23",                                                  |                                   |            |
+|                 |         "Duration": "37 years and 3 days",                                      |                                   |            |
+|                 |         "End of Reign": "1516-01-23",                                           |                                   |            |
+|                 |         "Name": "Fernando II de Aragon",                                        |                                   |            |
+|                 |         "Nickname": "el Catolico",                                              |                                   |            |
+|                 |         "Place of Birth": "Sos",                                                |                                   |            |
+|                 |         "Place of Death": "Madrigalejo",                                        |                                   |            |
+|                 |         "Start of Reign": "1479-01-20"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "75 years",                                     |                                   |            |
+|                 |         "Birth": "1479-11-06",                                                  |                                   |            |
+|                 |         "Burial Place": "Capilla Real de Granada",                              |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Felipe I de Castilla",                      |                                   |            |
+|                 |         "Death": "1555-04-12",                                                  |                                   |            |
+|                 |         "Duration": "50 years and 137 days",                                    |                                   |            |
+|                 |         "End of Reign": "1555-04-12",                                           |                                   |            |
+|                 |         "Name": "Juana I de Castilla",                                          |                                   |            |
+|                 |         "Nickname": "la Loca",                                                  |                                   |            |
+|                 |         "Place of Birth": "Toledo",                                             |                                   |            |
+|                 |         "Place of Death": "Tordesillas",                                        |                                   |            |
+|                 |         "Start of Reign": "1504-11-26"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "75 years",                                     |                                   |            |
+|                 |         "Birth": "1479-11-06",                                                  |                                   |            |
+|                 |         "Burial Place": "Capilla Real de Granada",                              |                                   |            |
+|                 |         "Death": "1555-04-12",                                                  |                                   |            |
+|                 |         "Duration": "39 years and 79 days",                                     |                                   |            |
+|                 |         "End of Reign": "1555-04-12",                                           |                                   |            |
+|                 |         "Name": "Juana I de Aragon",                                            |                                   |            |
+|                 |         "Nickname": "la Loca",                                                  |                                   |            |
+|                 |         "Place of Birth": "Toledo",                                             |                                   |            |
+|                 |         "Place of Death": "Tordesillas",                                        |                                   |            |
+|                 |         "Start of Reign": "1516-01-23"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "28 years",                                     |                                   |            |
+|                 |         "Birth": "1478-06-22",                                                  |                                   |            |
+|                 |         "Burial Place": "Capilla Real de Granada",                              |                                   |            |
+|                 |         "Death": "1506-09-25",                                                  |                                   |            |
+|                 |         "Duration": "75 days",                                                  |                                   |            |
+|                 |         "End of Reign": "1506-09-25",                                           |                                   |            |
+|                 |         "Name": "Felipe I de Castilla",                                         |                                   |            |
+|                 |         "Nickname": "el Hermoso",                                               |                                   |            |
+|                 |         "Place of Birth": "Brujas",                                             |                                   |            |
+|                 |         "Place of Death": "Burgos",                                             |                                   |            |
+|                 |         "Start of Reign": "1506-07-12"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Age at Time of Death": "58 years",                                     |                                   |            |
+|                 |         "Birth": "1500-02-24",                                                  |                                   |            |
+|                 |         "Burial Place": "Cripta Real del Monasterio de El Escorial",            |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Isabel de Portugal",                        |                                   |            |
+|                 |         "Death": "1558-09-21",                                                  |                                   |            |
+|                 |         "Duration": "39 years and 308 days",                                    |                                   |            |
+|                 |         "End of Reign": "1556-01-16",                                           |                                   |            |
+|                 |         "Name": "Carlos I",                                                     |                                   |            |
+|                 |         "Nickname": "el Cesar",                                                 |                                   |            |
+|                 |         "Place of Birth": "Gante",                                              |                                   |            |
+|                 |         "Place of Death": "Cuacos de Yuste",                                    |                                   |            |
+|                 |         "Start of Reign": "1516-03-14"                                          |                                   |            |
+|                 |       }                                                                         |                                   |            |
+|                 |     ]                                                                           |                                   |            |
+|                 |   }                                                                             |                                   |            |
+|                 | ]                                                                               |                                   |            |
+| Post-Transition | [                                                                               | challenge_4/Spanish_Monarchs.json |          2 |
+|                 |   {                                                                             |                                   |            |
+|                 |     "House": "Borbon",                                                          |                                   |            |
+|                 |     "Monarchs": [                                                               |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Birth": "1938-01-05",                                                  |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Sofia de Grecia",                           |                                   |            |
+|                 |         "Duration": "38 years and 192 days",                                    |                                   |            |
+|                 |         "End of Reign": "2014-06-18",                                           |                                   |            |
+|                 |         "Name": "Juan Carlos I",                                                |                                   |            |
+|                 |         "Place of Birth": "Roma",                                               |                                   |            |
+|                 |         "Start of Reign": "1975-11-22"                                          |                                   |            |
+|                 |       },                                                                        |                                   |            |
+|                 |       {                                                                         |                                   |            |
+|                 |         "Birth": "1968-01-30",                                                  |                                   |            |
+|                 |         "Consort\\/Queen Consort": "Letizia Ortiz",                             |                                   |            |
+|                 |         "Duration": "7 years and 140 days",                                     |                                   |            |
+|                 |         "Name": "Felipe VI",                                                    |                                   |            |
+|                 |         "Place of Birth": "Madrid",                                             |                                   |            |
+|                 |         "Start of Reign": "2014-06-19"                                          |                                   |            |
+|                 |       }                                                                         |                                   |            |
+|                 |     ]                                                                           |                                   |            |
+|                 |   }                                                                             |                                   |            |
+|                 | ]                                                                               |                                   |            |
++-----------------+---------------------------------------------------------------------------------+-----------------------------------+------------+
+2 Row(s) produced. Time Elapsed: 0.175s
+-- あとは パターン1 と同じ
+create or replace temp table challenge_4_result as
+select
+    row_number() over (order by Monarchs.value:"Birth"::date) as ID,
+    Monarchs.index + 1 as INTER_HOUSE_ID, -- 配列にある要素のインデックス cf. https://docs.snowflake.com/ja/sql-reference/functions/flatten#output
+    c."Era"::string as ERA,
+    houses.value:House::string as House,
+    Monarchs.value:"Name"::string as NAME,
+    case
+        when Monarchs.value:"Nickname"[0]::string is not null then Monarchs.value:"Nickname"[0]::string 
+        else Monarchs.value:"Nickname"::string 
+    end as NICKNAME_1,
+    Monarchs.value:"Nickname"[1]::string as NICKNAME_2,
+    Monarchs.value:"Nickname"[2]::string as NICKNAME_3,
+    Monarchs.value:"Birth"::string as BIRTH,
+    Monarchs.value:"Place of Birth"::string as PLACE_OF_BIRTH,
+    Monarchs.value:"Start of Reign"::string as START_OF_REIGN,
+    case
+        when Monarchs.value:"Consort\/Queen Consort"[0]::string is not null then Monarchs.value:"Consort\/Queen Consort"[0]::string 
+        else Monarchs.value:"Consort\/Queen Consort"::string 
+    end as QUEEN_OR_QUEEN_CONSORT_1,
+    Monarchs.value:"Consort\/Queen Consort"[1]::string as QUEEN_OR_QUEEN_CONSORT_2,
+    Monarchs.value:"Consort\/Queen Consort"[2]::string as QUEEN_OR_QUEEN_CONSORT_3,
+    Monarchs.value:"End of Reign"::string as END_OF_REIGN,
+    Monarchs.value:"Duration"::string as DURATION,
+    Monarchs.value:"Death"::string as DEATH,
+    Monarchs.value:"Age at Time of Death"::string as AGE_AT_TIME_OF_DEATH_YEARS,
+    Monarchs.value:"Place of Death"::string as PLACE_OF_DEATH,
+    Monarchs.value:"Burial Place"::string as BURIAL_PLACE,
+from
+    challenge_4_load as c,
+    lateral flatten (input => c."Houses") houses,
+    lateral flatten (input => Houses.value:"Monarchs") Monarchs
+order by
+    ID;
++------------------------------------------------+
+| status                                         |
+|------------------------------------------------|
+| Table CHALLENGE_4_RESULT successfully created. |
++------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.898s
+table challenge_4_result;
++----+----------------+-----------------+------------+------------------------+----------------------------+----------------------------+------------+------------+------------------------------+----------------+-------------------------------------------+------------------------------------+--------------------------+--------------+-----------------------+------------+----------------------------+----------------------------+--------------------------------------------+
+| ID | INTER_HOUSE_ID | ERA             | HOUSE      | NAME                   | NICKNAME_1                 | NICKNAME_2                 | NICKNAME_3 | BIRTH      | PLACE_OF_BIRTH               | START_OF_REIGN | QUEEN_OR_QUEEN_CONSORT_1                  | QUEEN_OR_QUEEN_CONSORT_2           | QUEEN_OR_QUEEN_CONSORT_3 | END_OF_REIGN | DURATION              | DEATH      | AGE_AT_TIME_OF_DEATH_YEARS | PLACE_OF_DEATH             | BURIAL_PLACE                               |
+|----+----------------+-----------------+------------+------------------------+----------------------------+----------------------------+------------+------------+------------------------------+----------------+-------------------------------------------+------------------------------------+--------------------------+--------------+-----------------------+------------+----------------------------+----------------------------+--------------------------------------------|
+|  1 |              1 | Pre-Transition  | Trastamara | Isabel I de Castilla   | la Catolica                | NULL                       | NULL       | 1451-04-22 | Madrigal de las Altas Torres | 1474-12-13     | NULL                                      | NULL                               | NULL                     | 1504-11-26   | 29 years and 349 days | 1504-11-26 | 53 years                   | Medina del Campo           | Capilla Real de Granada                    |
+|  2 |              3 | Pre-Transition  | Trastamara | Fernando II de Aragon  | el Catolico                | NULL                       | NULL       | 1452-03-10 | Sos                          | 1479-01-20     | Isabel I de Castilla                      | NULL                               | NULL                     | 1516-01-23   | 37 years and 3 days   | 1516-01-23 | 63 years                   | Madrigalejo                | Capilla Real de Granada                    |
+|  3 |              2 | Pre-Transition  | Trastamara | Fernando V de Castilla | el Catolico                | NULL                       | NULL       | 1452-03-10 | Sos                          | 1475-01-15     | NULL                                      | NULL                               | NULL                     | 1504-11-26   | 29 years and 316 days | 1516-01-23 | 63 years                   | Madrigalejo                | Capilla Real de Granada                    |
+|  4 |              6 | Pre-Transition  | Trastamara | Felipe I de Castilla   | el Hermoso                 | NULL                       | NULL       | 1478-06-22 | Brujas                       | 1506-07-12     | NULL                                      | NULL                               | NULL                     | 1506-09-25   | 75 days               | 1506-09-25 | 28 years                   | Burgos                     | Capilla Real de Granada                    |
+|  5 |              4 | Pre-Transition  | Trastamara | Juana I de Castilla    | la Loca                    | NULL                       | NULL       | 1479-11-06 | Toledo                       | 1504-11-26     | Felipe I de Castilla                      | NULL                               | NULL                     | 1555-04-12   | 50 years and 137 days | 1555-04-12 | 75 years                   | Tordesillas                | Capilla Real de Granada                    |
+|  6 |              5 | Pre-Transition  | Trastamara | Juana I de Aragon      | la Loca                    | NULL                       | NULL       | 1479-11-06 | Toledo                       | 1516-01-23     | NULL                                      | NULL                               | NULL                     | 1555-04-12   | 39 years and 79 days  | 1555-04-12 | 75 years                   | Tordesillas                | Capilla Real de Granada                    |
+|  7 |              7 | Pre-Transition  | Trastamara | Carlos I               | el Cesar                   | NULL                       | NULL       | 1500-02-24 | Gante                        | 1516-03-14     | Isabel de Portugal                        | NULL                               | NULL                     | 1556-01-16   | 39 years and 308 days | 1558-09-21 | 58 years                   | Cuacos de Yuste            | Cripta Real del Monasterio de El Escorial  |
+|  8 |              1 | Pre-Transition  | Austria    | Felipe II              | el Prudente                | NULL                       | NULL       | 1527-05-21 | Valladolid                   | 1556-01-16     | Maria I de Inglaterra                     | Isabel de Valois                   | Ana de Austria           | 1598-09-13   | 42 years and 240 days | 1598-09-13 | 71 years                   | San Lorenzo de El Escorial | Cripta Real del Monasterio de El Escorial  |
+|  9 |              2 | Pre-Transition  | Austria    | Felipe III             | el Piadoso                 | NULL                       | NULL       | 1578-04-14 | Madrid                       | 1598-09-13     | Margarita de Austria                      | NULL                               | NULL                     | 1621-03-31   | 22 years and 199 days | 1621-03-31 | 42 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 10 |              3 | Pre-Transition  | Austria    | Felipe IV              | el Grande                  | el Rey Planeta             | NULL       | 1605-04-08 | Valladolid                   | 1621-03-31     | Isabel de Borbon                          | Mariana de Austria                 | NULL                     | 1665-09-17   | 44 years and 170 days | 1665-09-17 | 60 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 11 |              4 | Pre-Transition  | Austria    | Carlos II              | el Hechizado               | NULL                       | NULL       | 1661-11-06 | Madrid                       | 1665-09-17     | Maria Luisa de Orleans                    | Mariana de Neoburgo                | NULL                     | 1700-11-01   | 35 years and 45 days  | 1700-11-01 | 38 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 12 |              3 | Pre-Transition  | Borbon     | Felipe V               | el Animoso                 | NULL                       | NULL       | 1683-12-19 | Versalles                    | 1724-09-06     | Isabel de Farnesio                        | NULL                               | NULL                     | 1746-07-09   | 21 years and 306 days | 1746-07-09 | 62 years                   | Madrid                     | Palacio Real de la Granja de San Ildefonso |
+| 13 |              1 | Pre-Transition  | Borbon     | Felipe V               | el Animoso                 | NULL                       | NULL       | 1683-12-19 | Versalles                    | 1700-11-16     | Maria Luisa Gabriela de Saboya            | Isabel de Farnesio                 | NULL                     | 1724-01-14   | 23 years and 59 days  | 1746-07-09 | 62 years                   | Madrid                     | Palacio Real de la Granja de San Ildefonso |
+| 14 |              5 | Pre-Transition  | Austria    | Archiduque Carlos      | el Archiduque              | NULL                       | NULL       | 1685-10-01 | Viena                        | 1703-09-12     | Isabel Cristina de Brunswick-Wolfenbuttel | NULL                               | NULL                     | 1715-07-02   | 11 years and 293 days | 1740-10-20 | 55 years                   | Viena                      | Cripta Imperial de Viena                   |
+| 15 |              2 | Pre-Transition  | Borbon     | Luis I                 | el Bien Amado              | el Liberal                 | NULL       | 1707-08-25 | Madrid                       | 1724-08-31     | Luisa Isabel de Orleans                   | NULL                               | NULL                     | 1724-08-31   | 230 days              | 1724-08-31 | 17 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 16 |              4 | Pre-Transition  | Borbon     | Fernando VI            | el Prudente                | el Justo                   | NULL       | 1713-09-23 | Madrid                       | 1746-07-09     | Barbara de Braganza                       | NULL                               | NULL                     | 1759-08-10   | 13 years and 32 days  | 1759-08-10 | 45 years                   | Villaviciosa de Odon       | Convento de las Salesas Reales             |
+| 17 |              5 | Pre-Transition  | Borbon     | Carlos III             | el Politico                | el Mejor Alcalde de Madrid | NULL       | 1716-01-20 | Madrid                       | 1759-08-10     | Maria Amalia de Sajonia                   | NULL                               | NULL                     | 1788-12-14   | 29 years and 126 days | 1788-12-14 | 72 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 18 |              6 | Pre-Transition  | Borbon     | Carlos IV              | el Cazador                 | NULL                       | NULL       | 1748-11-11 | Portici                      | 1788-12-14     | Maria Luisa de Parma                      | NULL                               | NULL                     | 1808-03-19   | 19 years and 96 days  | 1819-01-19 | 70 years                   | Napoles                    | Cripta Real del Monasterio de El Escorial  |
+| 19 |              1 | Pre-Transition  | Bonaparte  | Jose I                 | Pepe Botella               | Pepe Plazuelas             | el Intruso | 1768-01-07 | Corte                        | 1808-06-06     | Julia Clary                               | NULL                               | NULL                     | 1813-12-11   | 5 years and 188 days  | 1844-07-28 | 76 years                   | Florencia                  | Los Invalidos                              |
+| 20 |              7 | Pre-Transition  | Borbon     | Fernando VII           | el Deseado                 | el Rey Felon               | NULL       | 1784-10-14 | San Lorenzo de El Escorial   | 1808-08-11     | Maria Isabel de Braganza                  | Maria Josefa de Sajonia            | Maria Cristina de Borbon | 1833-09-29   | 19 years and 148 days | 1833-09-29 | 48 years                   | Madrid                     | Cripta Real del Monasterio de El Escorial  |
+| 21 |              8 | Pre-Transition  | Borbon     | Isabel II              | la de los Tristes Destinos | la Reina Castiza           | NULL       | 1830-10-10 | Madrid                       | 1833-09-29     | Francisco de Asis de Borbon               | NULL                               | NULL                     | 1868-09-30   | 35 years and 1 dia    | 1904-04-09 | 73 years                   | Paris                      | Cripta Real del Monasterio de El Escorial  |
+| 22 |              1 | Pre-Transition  | Saboya     | Amadeo I               | el Rey Caballero           | el Electo                  | NULL       | 1845-05-30 | Turin                        | 1870-11-16     | Maria Victoria dal Pozzo                  | NULL                               | NULL                     | 1873-02-11   | 2 years and 87 days   | 1890-01-18 | 44 years                   | Turin                      | Basilica de Superga                        |
+| 23 |              9 | Pre-Transition  | Borbon     | Alfonso XII            | el Pacificador             | NULL                       | NULL       | 1857-11-28 | Madrid                       | 1874-12-29     | Maria de las Mercedes de Orleans          | Maria Cristina de Habsburgo-Lorena | NULL                     | 1885-11-25   | 10 years and 331 days | 1885-11-25 | 27 years                   | El Pardo                   | Cripta Real del Monasterio de El Escorial  |
+| 24 |             10 | Pre-Transition  | Borbon     | Alfonso XIII           | el Africano                | NULL                       | NULL       | 1886-05-17 | Madrid                       | 1886-05-17     | Victoria Eugenia de Battenberg            | NULL                               | NULL                     | 1931-04-14   | 44 years and 332 days | 1941-02-28 | 54 years                   | Roma                       | Cripta Real del Monasterio de El Escorial  |
+| 25 |              1 | Post-Transition | Borbon     | Juan Carlos I          | NULL                       | NULL                       | NULL       | 1938-01-05 | Roma                         | 1975-11-22     | Sofia de Grecia                           | NULL                               | NULL                     | 2014-06-18   | 38 years and 192 days | NULL       | NULL                       | NULL                       | NULL                                       |
+| 26 |              2 | Post-Transition | Borbon     | Felipe VI              | NULL                       | NULL                       | NULL       | 1968-01-30 | Madrid                       | 2014-06-19     | Letizia Ortiz                             | NULL                               | NULL                     | NULL         | 7 years and 140 days  | NULL       | NULL                       | NULL                       | NULL                                       |
++----+----------------+-----------------+------------+------------------------+----------------------------+----------------------------+------------+------------+------------------------------+----------------+-------------------------------------------+------------------------------------+--------------------------+--------------+-----------------------+------------+----------------------------+----------------------------+--------------------------------------------+
+26 Row(s) produced. Time Elapsed: 0.188s
+-------------------------------------------------------------------------------------------
+-- 
+-- パターン3
+-- Snowpark で処理する
+-- 
+
+with load_json_in_stage as procedure (
+        file_path string,
+        table_name string,
+        table_type string)
+    returns VARCHAR
+    language python
+    runtime_version = '3.11'
+    packages = ('snowflake-snowpark-python==1.14.0')
+    handler = 'main'
+as 
+$$
+import snowflake.snowpark as snowpark
+from snowflake.snowpark.functions import table_function, row_number
+from snowflake.snowpark.functions import col, sql_expr, when
+from snowflake.snowpark.window import Window
+
+
+flatten = table_function('flatten')
+
+def main(session, file_path, table_name, table_type):
+    df = session.read.options({
+        'strip_outer_array': True
+    }).json(file_path)
+
+    # lateral flatten と同じ
+    df_flatten = df.select(
+        col('$1').alias('C'),
+        sql_expr('C:Houses').alias('HOUSES'),
+    ).join_table_function(
+        'flatten',
+        col('HOUSES')
+    ).select(
+        col('C'),
+        sql_expr('VALUE:House').alias('HOUSE'),
+        sql_expr('VALUE:Monarchs').alias('MONARCHS'),
+    ).join_table_function(
+        'flatten',
+        col('MONARCHS')
+    ).select(
+        col('C'),
+        col('HOUSE'),
+        col('VALUE').alias('MONARCHS'),
+        col('INDEX')
+    )
+
+    df_result = df_flatten.select(
+        row_number().over(Window.order_by(sql_expr('Monarchs:"Birth"'))).alias('ID'),
+        (col('INDEX') + 1).alias('INTER_HOUSE_ID'),  #  配列にある要素のインデックス cf. https://docs.snowflake.com/ja/sql-reference/functions/flatten#output
+        sql_expr('C:Era').alias('ERA'),
+        col('HOUSE').alias('HOUSE'),
+        sql_expr('MONARCHS:Name').alias('Name'),
+        when(
+            sql_expr('MONARCHS:Nickname[0]').is_not_null(), sql_expr('MONARCHS:Nickname[0]')
+        ).otherwise(
+            sql_expr('MONARCHS:Nickname')
+        ).alias('NICKNAME_1'),
+        sql_expr('MONARCHS:Nickname[1]').alias('NICKNAME_2'),
+        sql_expr('MONARCHS:Nickname[2]').alias('NICKNAME_3'),
+        sql_expr('MONARCHS:Birth').alias('BIRTH'),
+        sql_expr('MONARCHS:"Place of Birth"').alias('PLACE_OF_BIRTH'),
+        sql_expr('MONARCHS:"Start of Reign"').alias('START_OF_REIGN'),
+        when(
+            sql_expr('MONARCHS:"Consort\/Queen Consort"[0]').is_not_null(), sql_expr('MONARCHS:"Consort\/Queen Consort"[0]')
+        ).otherwise(
+            sql_expr('MONARCHS:"Consort\/Queen Consort"')
+        ).alias('QUEEN_OR_QUEEN_CONSORT_1'),
+        sql_expr('MONARCHS:"Consort\/Queen Consort"[1]').alias('QUEEN_OR_QUEEN_CONSORT_2'),
+        sql_expr('MONARCHS:"Consort\/Queen Consort"[2]').alias('QUEEN_OR_QUEEN_CONSORT_3'),
+        sql_expr('MONARCHS:"End of Reign"').alias('END_OF_REIGN'),
+        sql_expr('MONARCHS:Duration').alias('DURATION'),
+        sql_expr('MONARCHS:Death').alias('DEATH'),
+        sql_expr('MONARCHS:"Age at Time of Death"').alias('AGE_AT_TIME_OF_DEATH_YEARS'),
+        sql_expr('MONARCHS:"Place of Death"').alias('PLACE_OF_DEATH'),
+        sql_expr('MONARCHS:"Burial Place"').alias('BURIAL_PLACE'),
+    )
+
+    df_result.write.mode('overwrite').save_as_table(table_name=table_name, table_type=table_type)
+    return 'Succeeded'
+
+if __name__ == "__main__":
+    main()
+
+$$
+call load_json_in_stage(
+    file_path=>'@frosty_friday_stage/' || $file_name, -- '@<stage_name>/<file_path>'
+    table_name=>'challenge_4_result',
+    table_type=>'temporary'
+)
+;
++--------------------+
+| LOAD_JSON_IN_STAGE |
+|--------------------|
+| Succeeded          |
++--------------------+
+1 Row(s) produced. Time Elapsed: 4.480s
+table challenge_4_result;
++----+----------------+-------------------+--------------+--------------------------+------------------------------+------------------------------+--------------+--------------+--------------------------------+----------------+---------------------------------------------+--------------------------------------+----------------------------+--------------+-------------------------+--------------+----------------------------+------------------------------+----------------------------------------------+
+| ID | INTER_HOUSE_ID | ERA               | HOUSE        | NAME                     | NICKNAME_1                   | NICKNAME_2                   | NICKNAME_3   | BIRTH        | PLACE_OF_BIRTH                 | START_OF_REIGN | QUEEN_OR_QUEEN_CONSORT_1                    | QUEEN_OR_QUEEN_CONSORT_2             | QUEEN_OR_QUEEN_CONSORT_3   | END_OF_REIGN | DURATION                | DEATH        | AGE_AT_TIME_OF_DEATH_YEARS | PLACE_OF_DEATH               | BURIAL_PLACE                                 |
+|----+----------------+-------------------+--------------+--------------------------+------------------------------+------------------------------+--------------+--------------+--------------------------------+----------------+---------------------------------------------+--------------------------------------+----------------------------+--------------+-------------------------+--------------+----------------------------+------------------------------+----------------------------------------------|
+|  1 |              1 | "Pre-Transition"  | "Trastamara" | "Isabel I de Castilla"   | "la Catolica"                | NULL                         | NULL         | "1451-04-22" | "Madrigal de las Altas Torres" | "1474-12-13"   | NULL                                        | NULL                                 | NULL                       | "1504-11-26" | "29 years and 349 days" | "1504-11-26" | "53 years"                 | "Medina del Campo"           | "Capilla Real de Granada"                    |
+|  2 |              3 | "Pre-Transition"  | "Trastamara" | "Fernando II de Aragon"  | "el Catolico"                | NULL                         | NULL         | "1452-03-10" | "Sos"                          | "1479-01-20"   | "Isabel I de Castilla"                      | NULL                                 | NULL                       | "1516-01-23" | "37 years and 3 days"   | "1516-01-23" | "63 years"                 | "Madrigalejo"                | "Capilla Real de Granada"                    |
+|  3 |              2 | "Pre-Transition"  | "Trastamara" | "Fernando V de Castilla" | "el Catolico"                | NULL                         | NULL         | "1452-03-10" | "Sos"                          | "1475-01-15"   | NULL                                        | NULL                                 | NULL                       | "1504-11-26" | "29 years and 316 days" | "1516-01-23" | "63 years"                 | "Madrigalejo"                | "Capilla Real de Granada"                    |
+|  4 |              6 | "Pre-Transition"  | "Trastamara" | "Felipe I de Castilla"   | "el Hermoso"                 | NULL                         | NULL         | "1478-06-22" | "Brujas"                       | "1506-07-12"   | NULL                                        | NULL                                 | NULL                       | "1506-09-25" | "75 days"               | "1506-09-25" | "28 years"                 | "Burgos"                     | "Capilla Real de Granada"                    |
+|  5 |              4 | "Pre-Transition"  | "Trastamara" | "Juana I de Castilla"    | "la Loca"                    | NULL                         | NULL         | "1479-11-06" | "Toledo"                       | "1504-11-26"   | "Felipe I de Castilla"                      | NULL                                 | NULL                       | "1555-04-12" | "50 years and 137 days" | "1555-04-12" | "75 years"                 | "Tordesillas"                | "Capilla Real de Granada"                    |
+|  6 |              5 | "Pre-Transition"  | "Trastamara" | "Juana I de Aragon"      | "la Loca"                    | NULL                         | NULL         | "1479-11-06" | "Toledo"                       | "1516-01-23"   | NULL                                        | NULL                                 | NULL                       | "1555-04-12" | "39 years and 79 days"  | "1555-04-12" | "75 years"                 | "Tordesillas"                | "Capilla Real de Granada"                    |
+|  7 |              7 | "Pre-Transition"  | "Trastamara" | "Carlos I"               | "el Cesar"                   | NULL                         | NULL         | "1500-02-24" | "Gante"                        | "1516-03-14"   | "Isabel de Portugal"                        | NULL                                 | NULL                       | "1556-01-16" | "39 years and 308 days" | "1558-09-21" | "58 years"                 | "Cuacos de Yuste"            | "Cripta Real del Monasterio de El Escorial"  |
+|  8 |              1 | "Pre-Transition"  | "Austria"    | "Felipe II"              | "el Prudente"                | NULL                         | NULL         | "1527-05-21" | "Valladolid"                   | "1556-01-16"   | "Maria I de Inglaterra"                     | "Isabel de Valois"                   | "Ana de Austria"           | "1598-09-13" | "42 years and 240 days" | "1598-09-13" | "71 years"                 | "San Lorenzo de El Escorial" | "Cripta Real del Monasterio de El Escorial"  |
+|  9 |              2 | "Pre-Transition"  | "Austria"    | "Felipe III"             | "el Piadoso"                 | NULL                         | NULL         | "1578-04-14" | "Madrid"                       | "1598-09-13"   | "Margarita de Austria"                      | NULL                                 | NULL                       | "1621-03-31" | "22 years and 199 days" | "1621-03-31" | "42 years"                 | "Madrid"                     | "Cripta Real del Monasterio de El Escorial"  |
+| 10 |              3 | "Pre-Transition"  | "Austria"    | "Felipe IV"              | "el Grande"                  | "el Rey Planeta"             | NULL         | "1605-04-08" | "Valladolid"                   | "1621-03-31"   | "Isabel de Borbon"                          | "Mariana de Austria"                 | NULL                       | "1665-09-17" | "44 years and 170 days" | "1665-09-17" | "60 years"                 | "Madrid"                     | "Cripta Real del Monasterio de El Escorial"  |
+| 11 |              4 | "Pre-Transition"  | "Austria"    | "Carlos II"              | "el Hechizado"               | NULL                         | NULL         | "1661-11-06" | "Madrid"                       | "1665-09-17"   | "Maria Luisa de Orleans"                    | "Mariana de Neoburgo"                | NULL                       | "1700-11-01" | "35 years and 45 days"  | "1700-11-01" | "38 years"                 | "Madrid"                     | "Cripta Real del Monasterio de El Escorial"  |
+| 12 |              3 | "Pre-Transition"  | "Borbon"     | "Felipe V"               | "el Animoso"                 | NULL                         | NULL         | "1683-12-19" | "Versalles"                    | "1724-09-06"   | "Isabel de Farnesio"                        | NULL                                 | NULL                       | "1746-07-09" | "21 years and 306 days" | "1746-07-09" | "62 years"                 | "Madrid"                     | "Palacio Real de la Granja de San Ildefonso" |
+| 13 |              1 | "Pre-Transition"  | "Borbon"     | "Felipe V"               | "el Animoso"                 | NULL                         | NULL         | "1683-12-19" | "Versalles"                    | "1700-11-16"   | "Maria Luisa Gabriela de Saboya"            | "Isabel de Farnesio"                 | NULL                       | "1724-01-14" | "23 years and 59 days"  | "1746-07-09" | "62 years"                 | "Madrid"                     | "Palacio Real de la Granja de San Ildefonso" |
+| 14 |              5 | "Pre-Transition"  | "Austria"    | "Archiduque Carlos"      | "el Archiduque"              | NULL                         | NULL         | "1685-10-01" | "Viena"                        | "1703-09-12"   | "Isabel Cristina de Brunswick-Wolfenbuttel" | NULL                                 | NULL                       | "1715-07-02" | "11 years and 293 days" | "1740-10-20" | "55 years"                 | "Viena"                      | "Cripta Imperial de Viena"                   |
+| 15 |              2 | "Pre-Transition"  | "Borbon"     | "Luis I"                 | "el Bien Amado"              | "el Liberal"                 | NULL         | "1707-08-25" | "Madrid"                       | "1724-08-31"   | "Luisa Isabel de Orleans"                   | NULL                                 | NULL                       | "1724-08-31" | "230 days"              | "1724-08-31" | "17 years"                 | "Madrid"                     | "Cripta Real del Monasterio de El Escorial"  |
+| 16 |              4 | "Pre-Transition"  | "Borbon"     | "Fernando VI"            | "el Prudente"                | "el Justo"                   | NULL         | "1713-09-23" | "Madrid"                       | "1746-07-09"   | "Barbara de Braganza"                       | NULL                                 | NULL                       | "1759-08-10" | "13 years and 32 days"  | "1759-08-10" | "45 years"                 | "Villaviciosa de Odon"       | "Convento de las Salesas Reales"             |
+| 17 |              5 | "Pre-Transition"  | "Borbon"     | "Carlos III"             | "el Politico"                | "el Mejor Alcalde de Madrid" | NULL         | "1716-01-20" | "Madrid"                       | "1759-08-10"   | "Maria Amalia de Sajonia"                   | NULL                                 | NULL                       | "1788-12-14" | "29 years and 126 days" | "1788-12-14" | "72 years"                 | "Madrid"                     | "Cripta Real del Monasterio de El Escorial"  |
+| 18 |              6 | "Pre-Transition"  | "Borbon"     | "Carlos IV"              | "el Cazador"                 | NULL                         | NULL         | "1748-11-11" | "Portici"                      | "1788-12-14"   | "Maria Luisa de Parma"                      | NULL                                 | NULL                       | "1808-03-19" | "19 years and 96 days"  | "1819-01-19" | "70 years"                 | "Napoles"                    | "Cripta Real del Monasterio de El Escorial"  |
+| 19 |              1 | "Pre-Transition"  | "Bonaparte"  | "Jose I"                 | "Pepe Botella"               | "Pepe Plazuelas"             | "el Intruso" | "1768-01-07" | "Corte"                        | "1808-06-06"   | "Julia Clary"                               | NULL                                 | NULL                       | "1813-12-11" | "5 years and 188 days"  | "1844-07-28" | "76 years"                 | "Florencia"                  | "Los Invalidos"                              |
+| 20 |              7 | "Pre-Transition"  | "Borbon"     | "Fernando VII"           | "el Deseado"                 | "el Rey Felon"               | NULL         | "1784-10-14" | "San Lorenzo de El Escorial"   | "1808-08-11"   | "Maria Isabel de Braganza"                  | "Maria Josefa de Sajonia"            | "Maria Cristina de Borbon" | "1833-09-29" | "19 years and 148 days" | "1833-09-29" | "48 years"                 | "Madrid"                     | "Cripta Real del Monasterio de El Escorial"  |
+| 21 |              8 | "Pre-Transition"  | "Borbon"     | "Isabel II"              | "la de los Tristes Destinos" | "la Reina Castiza"           | NULL         | "1830-10-10" | "Madrid"                       | "1833-09-29"   | "Francisco de Asis de Borbon"               | NULL                                 | NULL                       | "1868-09-30" | "35 years and 1 dia"    | "1904-04-09" | "73 years"                 | "Paris"                      | "Cripta Real del Monasterio de El Escorial"  |
+| 22 |              1 | "Pre-Transition"  | "Saboya"     | "Amadeo I"               | "el Rey Caballero"           | "el Electo"                  | NULL         | "1845-05-30" | "Turin"                        | "1870-11-16"   | "Maria Victoria dal Pozzo"                  | NULL                                 | NULL                       | "1873-02-11" | "2 years and 87 days"   | "1890-01-18" | "44 years"                 | "Turin"                      | "Basilica de Superga"                        |
+| 23 |              9 | "Pre-Transition"  | "Borbon"     | "Alfonso XII"            | "el Pacificador"             | NULL                         | NULL         | "1857-11-28" | "Madrid"                       | "1874-12-29"   | "Maria de las Mercedes de Orleans"          | "Maria Cristina de Habsburgo-Lorena" | NULL                       | "1885-11-25" | "10 years and 331 days" | "1885-11-25" | "27 years"                 | "El Pardo"                   | "Cripta Real del Monasterio de El Escorial"  |
+| 24 |             10 | "Pre-Transition"  | "Borbon"     | "Alfonso XIII"           | "el Africano"                | NULL                         | NULL         | "1886-05-17" | "Madrid"                       | "1886-05-17"   | "Victoria Eugenia de Battenberg"            | NULL                                 | NULL                       | "1931-04-14" | "44 years and 332 days" | "1941-02-28" | "54 years"                 | "Roma"                       | "Cripta Real del Monasterio de El Escorial"  |
+| 25 |              1 | "Post-Transition" | "Borbon"     | "Juan Carlos I"          | NULL                         | NULL                         | NULL         | "1938-01-05" | "Roma"                         | "1975-11-22"   | "Sofia de Grecia"                           | NULL                                 | NULL                       | "2014-06-18" | "38 years and 192 days" | NULL         | NULL                       | NULL                         | NULL                                         |
+| 26 |              2 | "Post-Transition" | "Borbon"     | "Felipe VI"              | NULL                         | NULL                         | NULL         | "1968-01-30" | "Madrid"                       | "2014-06-19"   | "Letizia Ortiz"                             | NULL                                 | NULL                       | NULL         | "7 years and 140 days"  | NULL         | NULL                       | NULL                         | NULL                                         |
++----+----------------+-------------------+--------------+--------------------------+------------------------------+------------------------------+--------------+--------------+--------------------------------+----------------+---------------------------------------------+--------------------------------------+----------------------------+--------------+-------------------------+--------------+----------------------------+------------------------------+----------------------------------------------+
+26 Row(s) produced. Time Elapsed: 0.176s
