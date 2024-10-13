@@ -1,0 +1,688 @@
+/*
+This week we’ll be looking at a feature that has just hit Preview Feature – Open : Sending Email Notifications.
+
+We’re asking you to use this feature in conjunction with linked tasks to create a very small chain while tackling 2 different subjects.
+
+# The Challenge
+The assignment for this week is two-fold :
+
+- Create a scheduled task (task #1) that inserts the current timestamp into a table every 5 minutes
+- Create a linked task (task #2) that sends an email that confirms the running of task #1 that contains the following information:
+  Task has successfully finished on <Account> which is deployed on <region> region at <timestamp>
+
+---
+
+今週は、プレビュー機能として公開されたばかりの機能「オープン：電子メール通知の送信」について見ていきます。
+※この問題は 2022-12-09 に公開されました。
+　Sending Email Notifications 機能は 2022/11 プレビュー開始、2023/08 にGAとなっています
+
+この機能をリンクされたタスクと組み合わせて、2つの異なるテーマに取り組みながら、非常に小さな連鎖を作り出してください。
+
+# チャレンジ
+今週の課題は2つ：
+
+- 5分ごとに、現在のタイムスタンプをテーブルに挿入するスケジュールタスク(タスク#1)を作成する。
+- タスク#1の実行を確認するメールを送信するリンクタスク(タスク#2)を作成する。メールは以下の情報を含む：
+  タスクは、<region>リージョンに配置された<Account>で、<timestamp>に正常に終了しました。
+
+*/
+
+------------------------------------------------------------
+-- 
+-- 準備
+-- 
+------------------------------------------------------------ 
+
+use role SYSADMIN;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.102s
+create or replace database M_KAJIYA_FROSTY_FRIDAY;
++-------------------------------------------------------+
+| status                                                |
+|-------------------------------------------------------|
+| Database M_KAJIYA_FROSTY_FRIDAY successfully created. |
++-------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.371s
+use schema M_KAJIYA_FROSTY_FRIDAY.PUBLIC;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.109s
+-- タイムスタンプを記録するテーブル
+create table M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_TIMESTAMP (
+    ts TIMESTAMP_LTZ
+)
+comment = 'タイムスタンプを記録するテーブル'
+;
++----------------------------------------------------+
+| status                                             |
+|----------------------------------------------------|
+| Table CHALLENGE_26_TIMESTAMP successfully created. |
++----------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.410s
+------------------------------------------------------------
+-- 
+-- 課題1. 
+-- 5分ごとに、現在のタイムスタンプをテーブルに挿入するスケジュールタスク(タスク#1)を作成する
+-- 
+------------------------------------------------------------ 
+
+create task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK
+  schedule = '5 minute'
+  user_task_managed_initial_warehouse_size = 'XSMALL' -- サーバレスタスクの初期サイズ。サーバレスタスクは数回実行ののちに自動的に理想的なサイズを設定するが、この内容なら最初っから最小でいいでしょう。指定しない場合のサイズは MEDIUM
+  AS
+    INSERT INTO M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_TIMESTAMP(ts) VALUES(CURRENT_TIMESTAMP);
++------------------------------------------------+
+| status                                         |
+|------------------------------------------------|
+| Task CHALLENGE_26_1_TASK successfully created. |
++------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.130s
+-- 開始（忘れがち）
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.428s
+-- 待ってもいいけど、Owner なので手動実行しちゃう
+-- （以前は ACCOUNTADMIN 持ってないと EXECUTE TASK できなかったような？？）
+execute task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK;
++-----------------------------------------------------------+
+| status                                                    |
+|-----------------------------------------------------------|
+| Task CHALLENGE_26_1_TASK is scheduled to run immediately. |
++-----------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.432s
+call system$wait(30);
++-------------------+
+| SYSTEM$WAIT       |
+|-------------------|
+| waited 30 seconds |
++-------------------+
+1 Row(s) produced. Time Elapsed: 30.067s
+-- 実行履歴を見てみましょ
+select
+    query_id
+    , database_name || '.' || schema_name || '.' || name as name
+    , state
+    , scheduled_time
+    , query_start_time
+    , completed_time
+    , scheduled_from
+from 
+    table(
+        information_schema.task_history(
+            scheduled_time_range_start => dateadd('hour',-1,current_timestamp()),
+            result_limit => 10,
+            task_name => 'CHALLENGE_26_1_TASK'
+        )
+    )
+order by
+    query_start_time desc -- scheduled が入っちゃうから
+limit
+    1
+;
++----------+---------------------------------------------------+-----------+-------------------------------+------------------+----------------+----------------+
+| QUERY_ID | NAME                                              | STATE     | SCHEDULED_TIME                | QUERY_START_TIME | COMPLETED_TIME | SCHEDULED_FROM |
+|----------+---------------------------------------------------+-----------+-------------------------------+------------------+----------------+----------------|
+| NULL     | M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK | SCHEDULED | 2024-10-13 17:35:03.701 +0900 | NULL             | NULL           | SCHEDULE       |
++----------+---------------------------------------------------+-----------+-------------------------------+------------------+----------------+----------------+
+1 Row(s) produced. Time Elapsed: 0.783s
+-- テーブルにinsertされているかを確認しましょ
+table M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_TIMESTAMP;
++-------------------------------+
+| TS                            |
+|-------------------------------|
+| 2024-10-13 17:30:04.131 +0900 |
++-------------------------------+
+1 Row(s) produced. Time Elapsed: 0.197s
+------------------------------------------------------------
+-- 
+-- 課題2. 
+-- タスク#1の実行を確認するメールを送信するリンクタスク(タスク#2)を作成する。メールは以下の情報を含む：
+--   タスクは、<region>リージョンに配置された<Account>で、<timestamp>に正常に終了しました。
+-- 
+------------------------------------------------------------ 
+
+-- 通知を飛ばすために notification integration を作成
+create or replace notification integration m_kajiya_frosty_friday_mail_notif_integration
+  type = email
+  enabled = true
+  allowed_recipients = (
+    'test@example.com'
+);
++---------------------------------------------------------------------------------+
+| status                                                                          |
+|---------------------------------------------------------------------------------|
+| Integration M_KAJIYA_FROSTY_FRIDAY_MAIL_NOTIF_INTEGRATION successfully created. |
++---------------------------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.121s
+-- 課題1タスクの最新終了時刻を取るUDF
+create or replace function M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_GET_TASK_COMPLETED_TIME(task_name varchar)
+    returns varchar not null
+    language sql
+as
+$$
+    select max(completed_time)::string
+        from table(information_schema.task_history(
+            scheduled_time_range_start=>dateadd('hour', -1, current_timestamp()),
+            result_limit => 10,
+            task_name => task_name
+        )
+    )
+$$
+;
++---------------------------------------------------------------------+
+| status                                                              |
+|---------------------------------------------------------------------|
+| Function CHALLENGE_26_GET_TASK_COMPLETED_TIME successfully created. |
++---------------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.178s
+select CHALLENGE_26_GET_TASK_COMPLETED_TIME('CHALLENGE_26_1_TASK');
++-------------------------------------------------------------+
+| CHALLENGE_26_GET_TASK_COMPLETED_TIME('CHALLENGE_26_1_TASK') |
+|-------------------------------------------------------------|
+| 2024-10-13 17:30:05.315 +0900                               |
++-------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.635s
+-- 
+-- パターン1
+-- （普通に）子タスクを付けよう
+-- 
+
+-- 子タスクを設定する際、親タスクを止める必要があります（n敗）
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.120s
+create or replace task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_1_TASK
+    after M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK
+as
+    call system$send_email(
+        'm_kajiya_frosty_friday_mail_notif_integration',
+        'test@example.com',
+        'frosty_friday #26 challenge',
+        concat(
+            'Task has successfully finished on ',
+            current_account(),
+            ' which is deployed on ',
+            current_region(),
+            ' region at ',
+            CHALLENGE_26_GET_TASK_COMPLETED_TIME('CHALLENGE_26_1_TASK')
+        )
+    )
+;
++--------------------------------------------------+
+| status                                           |
+|--------------------------------------------------|
+| Task CHALLENGE_26_2_1_TASK successfully created. |
++--------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.119s
+-- 開始
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_1_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.086s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.298s
+-- 待ってもいいけど、Owner なので手動実行しちゃう
+execute task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK;
++-----------------------------------------------------------+
+| status                                                    |
+|-----------------------------------------------------------|
+| Task CHALLENGE_26_1_TASK is scheduled to run immediately. |
++-----------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.119s
+call system$wait(30);
++-------------------+
+| SYSTEM$WAIT       |
+|-------------------|
+| waited 30 seconds |
++-------------------+
+1 Row(s) produced. Time Elapsed: 30.080s
+-- 実行履歴を見てみましょ
+select
+    query_id
+    , database_name || '.' || schema_name || '.' || name as name
+    , state
+    , scheduled_time
+    , query_start_time
+    , completed_time
+    , scheduled_from
+from 
+    table(
+        information_schema.task_history(
+            scheduled_time_range_start => dateadd('hour', -1, current_timestamp()),
+            result_limit => 10,
+            task_name => 'CHALLENGE_26_2_1_TASK'
+        )
+    )
+;
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+| QUERY_ID                             | NAME                                                | STATE     | SCHEDULED_TIME                | QUERY_START_TIME              | COMPLETED_TIME                | SCHEDULED_FROM |
+|--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------|
+| 01b7a89e-0001-d3e0-0000-2c790295f3de | M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_1_TASK | SUCCEEDED | 2024-10-13 17:30:38.521 +0900 | 2024-10-13 17:30:39.047 +0900 | 2024-10-13 17:30:40.481 +0900 | EXECUTE TASK   |
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+2 Row(s) produced. Time Elapsed: 0.426s
+-- メールボックスを確認しましょう
+
+-- Snowsight でタスクグラフも見ておくといいかも
+
+-- 
+-- パターン2
+-- ファイナライザータスクを使ってみよう
+-- ファイナライザータスクは、タスクグラフが実行された場合に必ず実行されるタスク。
+-- 実行が保証されているので、タスクグラフが途中で失敗した場合に問題が発生しないようにクリーンアップを行うとか、タスクグラフ終了時に通知を飛ばす...などの用途で使います。
+-- https://docs.snowflake.com/ja/user-guide/tasks-intro#finalizer-task
+
+-- 子タスクを設定するので、親タスクを止める必要があります
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.091s
+create or replace task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_2_TASK
+    finalize = M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK
+as
+    call system$send_email(
+        'm_kajiya_frosty_friday_mail_notif_integration',
+        'test@example.com',
+        'frosty_friday #26 challenge',
+        concat(
+            'Task has successfully finished on ',
+            current_account(),
+            ' which is deployed on ',
+            current_region(),
+            ' region at ',
+            CHALLENGE_26_GET_TASK_COMPLETED_TIME('CHALLENGE_26_1_TASK')
+        )
+    )
+;
++--------------------------------------------------+
+| status                                           |
+|--------------------------------------------------|
+| Task CHALLENGE_26_2_2_TASK successfully created. |
++--------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.129s
+-- 開始
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_2_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.121s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.285s
+execute task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK;
++-----------------------------------------------------------+
+| status                                                    |
+|-----------------------------------------------------------|
+| Task CHALLENGE_26_1_TASK is scheduled to run immediately. |
++-----------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.200s
+call system$wait(30);
++-------------------+
+| SYSTEM$WAIT       |
+|-------------------|
+| waited 30 seconds |
++-------------------+
+1 Row(s) produced. Time Elapsed: 30.053s
+-- 実行履歴を見てみましょ
+select
+    query_id
+    , database_name || '.' || schema_name || '.' || name as name
+    , state
+    , scheduled_time
+    , query_start_time
+    , completed_time
+    , scheduled_from
+from 
+    table(
+        information_schema.task_history(
+            scheduled_time_range_start=>dateadd('hour', -1, current_timestamp()),
+            result_limit => 10,
+            task_name => 'CHALLENGE_26_2_2_TASK'
+        )
+    )
+;
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+| QUERY_ID                             | NAME                                                | STATE     | SCHEDULED_TIME                | QUERY_START_TIME              | COMPLETED_TIME                | SCHEDULED_FROM |
+|--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------|
+| 01b7a89f-0001-d3e0-0000-2c790295f40e | M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_2_TASK | SUCCEEDED | 2024-10-13 17:31:10.481 +0900 | 2024-10-13 17:31:11.032 +0900 | 2024-10-13 17:31:12.581 +0900 | EXECUTE TASK   |
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+1 Row(s) produced. Time Elapsed: 0.327s
+-- メールボックスを確認しましょう
+
+-- Snowsight でタスクグラフも見ておきましょう。ファイナライザータスクはどのように表示されているかな？
+
+
+
+
+-- 
+-- パターン3
+-- SYSTEM$SEND_SNOWFLAKE_NOTIFICATION を使ってみよう
+-- 構文が数パターンあります。今回はシンプルに メッセ―ジ＋通知統合
+
+-- 子タスクを設定するので、親タスクを止める必要があります
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.122s
+create or replace task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_3_TASK
+    after M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK
+as
+    call system$send_snowflake_notification(
+        snowflake.notification.text_plain(
+            concat(
+                'Task has successfully finished on ',
+                current_account(),
+                ' which is deployed on ',
+                current_region(),
+                ' region at ',
+                CHALLENGE_26_GET_TASK_COMPLETED_TIME('CHALLENGE_26_1_TASK')
+            )
+        ),
+        snowflake.notification.email_integration_config(
+            'm_kajiya_frosty_friday_mail_notif_integration',
+            'frosty_friday #26 challenge',
+            array_construct('test@example.com')
+        )
+    )
+;
++--------------------------------------------------+
+| status                                           |
+|--------------------------------------------------|
+| Task CHALLENGE_26_2_3_TASK successfully created. |
++--------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.146s
+-- 開始
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_3_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.125s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.216s
+execute task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK;
++-----------------------------------------------------------+
+| status                                                    |
+|-----------------------------------------------------------|
+| Task CHALLENGE_26_1_TASK is scheduled to run immediately. |
++-----------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.248s
+call system$wait(30);
++-------------------+
+| SYSTEM$WAIT       |
+|-------------------|
+| waited 30 seconds |
++-------------------+
+1 Row(s) produced. Time Elapsed: 30.047s
+-- 実行履歴を見てみましょ
+select
+    query_id
+    , database_name || '.' || schema_name || '.' || name as name
+    , state
+    , scheduled_time
+    , query_start_time
+    , completed_time
+    , scheduled_from
+from 
+    table(
+        information_schema.task_history(
+            scheduled_time_range_start=>dateadd('hour', -1, current_timestamp()),
+            result_limit => 10,
+            task_name => 'CHALLENGE_26_2_3_TASK'
+        )
+    )
+;
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+| QUERY_ID                             | NAME                                                | STATE     | SCHEDULED_TIME                | QUERY_START_TIME              | COMPLETED_TIME                | SCHEDULED_FROM |
+|--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------|
+| 01b7a89f-0001-d50c-0000-2c790295e606 | M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_3_TASK | SUCCEEDED | 2024-10-13 17:31:40.541 +0900 | 2024-10-13 17:31:40.891 +0900 | 2024-10-13 17:31:42.153 +0900 | EXECUTE TASK   |
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+1 Row(s) produced. Time Elapsed: 0.316s
+-- 
+-- パターン4(おまけ)
+-- SYSTEM$SEND_SNOWFLAKE_NOTIFICATION を使って Slack に投げよう
+-- 問題が「メールで通知して」だから題意に沿わない気もするけど！まいっか！！
+-- 
+
+-- Slack notification integration を作成
+-- まず Slack Webhook URL の services/ 以降をシークレットに登録
+create or replace secret M_KAJIYA_FROSTY_FRIDAY.PUBLIC.m_kajiya_frosty_friday_slack_secret
+    type = generic_string
+    secret_string = 'TXXXXXXX/BXXXXXXXX/XXXXXXXXXXXXXXXXXXXXXXXXXXXX';
++------------------------------------------------------------------+
+| status                                                           |
+|------------------------------------------------------------------|
+| Secret M_KAJIYA_FROSTY_FRIDAY_SLACK_SECRET successfully created. |
++------------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.090s
+-- SNOWFLAKE_WEBHOOK_MESSAGE プレースホルダーを入れて、メッセージを置き換えられるようにしておく
+create or replace notification integration m_kajiya_frosty_friday_slack_notif_integration
+    type=webhook
+    enabled=true
+    webhook_url='https://hooks.slack.com/services/SNOWFLAKE_WEBHOOK_SECRET'
+    webhook_secret=M_KAJIYA_FROSTY_FRIDAY.PUBLIC.m_kajiya_frosty_friday_slack_secret
+    webhook_body_template= '{
+        "channel": "snowflake-notification",
+        "attachments":[
+            {
+                "fallback":"info",
+                "pretext":"frosty_friday live challenge",
+                "color":"good",
+                "fields":[{
+                    "title":"frosty_friday #26",
+                    "value":"SNOWFLAKE_WEBHOOK_MESSAGE"
+                }]
+            }
+        ]
+    }'
+    webhook_headers=('content-type' = 'application/json');
++----------------------------------------------------------------------------------+
+| status                                                                           |
+|----------------------------------------------------------------------------------|
+| Integration M_KAJIYA_FROSTY_FRIDAY_SLACK_NOTIF_INTEGRATION successfully created. |
++----------------------------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.131s
+-- 子タスクを設定するので、親タスクを止める必要があります
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.089s
+create or replace task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_4_TASK
+    after M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK
+as
+    call system$send_snowflake_notification(
+        snowflake.notification.text_plain(
+            concat(
+                'Task has successfully finished on ',
+                current_account(),
+                ' which is deployed on ',
+                current_region(),
+                ' region at ',
+                CHALLENGE_26_GET_TASK_COMPLETED_TIME('CHALLENGE_26_1_TASK')
+            )
+        ),
+        snowflake.notification.integration(
+            'm_kajiya_frosty_friday_slack_notif_integration'
+        )
+    )
+;
++--------------------------------------------------+
+| status                                           |
+|--------------------------------------------------|
+| Task CHALLENGE_26_2_4_TASK successfully created. |
++--------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.132s
+-- 開始
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_4_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.088s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK resume;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.158s
+execute task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_1_TASK;
++-----------------------------------------------------------+
+| status                                                    |
+|-----------------------------------------------------------|
+| Task CHALLENGE_26_1_TASK is scheduled to run immediately. |
++-----------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.106s
+call system$wait(30);
++-------------------+
+| SYSTEM$WAIT       |
+|-------------------|
+| waited 30 seconds |
++-------------------+
+1 Row(s) produced. Time Elapsed: 30.084s
+-- 実行履歴を見てみましょ
+select
+    query_id
+    , database_name || '.' || schema_name || '.' || name as name
+    , state
+    , scheduled_time
+    , query_start_time
+    , completed_time
+    , scheduled_from
+from 
+    table(
+        information_schema.task_history(
+            scheduled_time_range_start=>dateadd('hour', -1, current_timestamp()),
+            result_limit => 10,
+            task_name => 'CHALLENGE_26_2_4_TASK'
+        )
+    )
+;
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+| QUERY_ID                             | NAME                                                | STATE     | SCHEDULED_TIME                | QUERY_START_TIME              | COMPLETED_TIME                | SCHEDULED_FROM |
+|--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------|
+| 01b7a8a0-0001-d52b-0000-2c79029602b2 | M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_4_TASK | SUCCEEDED | 2024-10-13 17:32:11.481 +0900 | 2024-10-13 17:32:12.306 +0900 | 2024-10-13 17:32:14.295 +0900 | EXECUTE TASK   |
++--------------------------------------+-----------------------------------------------------+-----------+-------------------------------+-------------------------------+-------------------------------+----------------+
+1 Row(s) produced. Time Elapsed: 0.532s
+------------------------------------------------------------
+-- 
+-- あとしまつ
+-- 
+------------------------------------------------------------ 
+
+use role SYSADMIN;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.066s
+-- インターバルの短いタスクを無意味に放置するのは止めようね！
+alter task CHALLENGE_26_1_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.110s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_1_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.085s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_2_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.076s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_3_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.099s
+alter task M_KAJIYA_FROSTY_FRIDAY.PUBLIC.CHALLENGE_26_2_4_TASK suspend;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.091s
+drop  notification integration m_kajiya_frosty_friday_mail_notif_integration;
++---------------------------------------------------------------------+
+| status                                                              |
+|---------------------------------------------------------------------|
+| M_KAJIYA_FROSTY_FRIDAY_MAIL_NOTIF_INTEGRATION successfully dropped. |
++---------------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.186s
+drop  notification integration m_kajiya_frosty_friday_slack_notif_integration;
++----------------------------------------------------------------------+
+| status                                                               |
+|----------------------------------------------------------------------|
+| M_KAJIYA_FROSTY_FRIDAY_SLACK_NOTIF_INTEGRATION successfully dropped. |
++----------------------------------------------------------------------+
+1 Row(s) produced. Time Elapsed: 0.088s
+------------------------------------------------------------
+-- 
+-- 参考
+-- 
+------------------------------------------------------------ 
+
+-- https://docs.snowflake.com/en/release-notes/2022-11#new-system-stored-procedure-for-sending-email-notifications-preview
+-- https://docs.snowflake.com/en/release-notes/2023/7_27
+
+-- https://docs.snowflake.com/en/sql-reference/stored-procedures/system_send_email
+-- https://docs.snowflake.com/en/user-guide/notifications/snowflake-notifications
+
+-- https://zenn.dev/dataheroes/articles/slack-notification
+-- https://zenn.dev/churadata/articles/3754ad36ccf023
+-- https://dev.classmethod.jp/articles/systemsend-email-and-systemsend-snowflake-notification-snowflakedb/

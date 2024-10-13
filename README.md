@@ -10,4 +10,52 @@
 |script|クエリ実行用スクリプト|
 |log|クエリ実行ログ|
 
+# 実行環境
+## on VSCode
+VSCode + Snowflake Extention で実行することを想定しています
 
+## on SnowSQL
+SnowSQL で実行する仕組みもあります。
+[./script/run_snowsql.sh](./script/run_snowsql.sh)を使用します
+
+```bash-session
+$ bash ./script/run_snowsql.sh <sql_file> 
+```
+
+<details>
+<summary>実行例</summary>
+
+```bash-session
+❯ bash ./script/run_snowsql.sh ./sql/test.sql 
+* SnowSQL * v1.2.32
+Type SQL statements or !help
+-------------------------------------------------------------------------------- 
+-- 
+-- testだよ
+-- 
+-------------------------------------------------------------------------------- 
+ 
+use role SYSADMIN;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.080s
+use warehouse M_KAJIYA_WH;
++----------------------------------+
+| status                           |
+|----------------------------------|
+| Statement executed successfully. |
++----------------------------------+
+1 Row(s) produced. Time Elapsed: 0.113s
+select 'FROSTY_FRIDAY';
++-----------------+
+| 'FROSTY_FRIDAY' |
+|-----------------|
+| FROSTY_FRIDAY   |
++-----------------+
+1 Row(s) produced. Time Elapsed: 0.085s
+```
+
+</details>
