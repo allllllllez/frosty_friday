@@ -1,0 +1,21 @@
+#################################################
+# Usage:
+#     * Start terraform
+#         ex.) docker-compose run --rm tf
+# 
+# Requirements(tf):
+#     * Snowflake terraform user & rsa key,
+#       accountadmin role
+#################################################
+services:
+  tf:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    tty: true
+    image: snowflake_tf
+    working_dir: /root/terraform/
+    volumes:
+      - ./:/root/terraform
+      - ../.ssh/rsa_key.p8:/root/.ssh/rsa_key.p8
+    env_file: .env
