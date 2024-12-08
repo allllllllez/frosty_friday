@@ -83,8 +83,24 @@ create schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone
 show grants on schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
 show grants on table M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone.table_one;
 
+-- 
+-- （おまけ）データベースをクローンしたときも、自身に対する権限はコピーされない。
+-- 
+show grants on database M_KAJIYA_FROSTY_FRIDAY;
+show grants on schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema;
+
+-- クローンして、権限を見てみよう
+create database M_KAJIYA_FROSTY_FRIDAY_CLONE
+    clone M_KAJIYA_FROSTY_FRIDAY;
+
+-- データベースに付与されていた権限は剥奪されている
+show grants on database M_KAJIYA_FROSTY_FRIDAY_CLONE;
+show grants on schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema;
+show grants on schema M_KAJIYA_FROSTY_FRIDAY_CLONE.cold_lonely_schema;
+
 
 -- 回答編に入る前に、クローン先を削除しておく
+drop database M_KAJIYA_FROSTY_FRIDAY_CLONE;
 drop schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
 
 -------------------------------------------------------------------------------
@@ -93,23 +109,21 @@ drop schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
 -- 
 -------------------------------------------------------------------------------
 
+show views in schema 'INFORMATION_SCHEMA'
+;
 
 -------------------------------------------------------------------------------
 -- 
--- パターン1 
+-- パターン1
 -- 
--- スキーマの権限をコピーする
+-- INFORMATION_SCHEMA.OBJECT_PRIVILEGES を使う
 -- 
 -------------------------------------------------------------------------------
 
+use role ACCOUNTADMIN;
+ALTER SESSION SET LOG_LEVEL = DEBUG;
+use role SYSADMIN;
 
--------------------------------------------------------------------------------
--- 
--- パターン2
--- 
--- INFORMATION_SCHEMA.OBJECT_PRIVILEGES
--- 
--------------------------------------------------------------------------------
 create or replace procedure M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy_grants(
     database_name string, 
     schema_name string, 
@@ -118,18 +132,20 @@ create or replace procedure M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy
     at_or_before_statement string
 )
   returns varchar
---   returns table()
   language python
   runtime_version = '3.11'
   packages = ('snowflake-snowpark-python==1.20.0')
   handler = 'main'
-  comment = 'データベース・テーブルに付与された権限も含めてクローンする'
+  comment = 'スキーマに付与された権限も含めてクローンする'
   execute as owner
   as
 $$
 import snowflake.snowpark as snowpark
 from snowflake.snowpark.functions import col
 from snowflake.snowpark.exceptions import SnowparkSQLException
+import logging
+
+logger = logging.getLogger("schema_clone_with_copy_grants")
 
 def get_error_msg(details: str, excepion: Exception) -> dict:
     '''エラー発生時にストアドプロシージャが返すメッセージを作成'''
@@ -138,6 +154,43 @@ def get_error_msg(details: str, excepion: Exception) -> dict:
         'DETAILS': details,
         'EXCEPTION': excepion
     }
+
+def get_identify_schema_name(
+        session: snowpark.Session,
+        database_name: str,
+        schema_name: str,
+    ) -> dict:
+    '''解決可能なデータベース名、スキーマ名を取得。" はつけないので使う側で付けてほしい
+
+    Parameters
+    ----------
+    session : snowpark.Session
+        セッション
+    database_name : str
+        データベース名
+    schema_name : str
+        スキーマ名
+
+    Returns
+    -------
+    dict
+        {
+            "database_name": <データベース名>,
+            "schema_name": <スキーマ名>
+        }
+    '''    
+    schema_info = session.sql(
+        f"show schemas like '{schema_name}' in database {database_name}").collect()[0].as_dict()
+    database_name = schema_info["database_name"]
+    schema_name = schema_info["name"]
+    logger.debug(f'schema name: "{database_name}"."{schema_name}"')
+    
+    return {
+        "database_name": database_name,
+        "schema_name": schema_name
+    }
+
+
 def copy_table_with_grant(
         session: snowpark.Session,
         src_db: str,
@@ -176,6 +229,7 @@ def copy_table_with_grant(
                     {(at_or_before_statement or "")}
             '''
         ).collect()
+
     except Exception as e:
         return get_error_msg(
             f'Failed to create schema clone from `{src_db}.{src_schema}` to `{dst_db}.{dst_schema}`',
@@ -183,17 +237,21 @@ def copy_table_with_grant(
         )
 
     # データベース名、スキーマ名を解決
-    src_schema_info = session.sql(
-        f"show schemas like '{src_schema}' in database {src_db}").collect()[0].as_dict()
+    src_schema_info = get_identify_schema_name(
+        session=session,
+        database_name=src_db,
+        schema_name=src_schema
+    )
     src_db = src_schema_info["database_name"]
-    src_schema = src_schema_info["name"]
-    print(f'src schema: {src_db}.{src_schema}')
+    src_schema = src_schema_info["schema_name"]
 
-    dst_schema_info = session.sql(
-        f"show schemas like '{dst_schema}' in database {dst_db}").collect()[0].as_dict()
+    dst_schema_info = get_identify_schema_name(
+        session=session,
+        database_name=dst_db,
+        schema_name=dst_schema
+    )
     dst_db = dst_schema_info["database_name"]
-    dst_schema = dst_schema_info["name"]
-    print(f'dst schema: {dst_db}.{dst_schema}')
+    dst_schema = dst_schema_info["schema_name"]
 
     # 対象オブジェクトに付与されている権限を取得
     src_objs = session.sql(
@@ -204,34 +262,37 @@ def copy_table_with_grant(
                 {src_db}.INFORMATION_SCHEMA.OBJECT_PRIVILEGES
             {(at_or_before_statement or "")}
         '''
-    ).filter(
-        (col('OBJECT_CATALOG') == src_db)
-        & (
-            (col('OBJECT_NAME') == src_schema) | (col('OBJECT_SCHEMA') == src_schema) # クローン元データベース・スキーマ自身が対象。他はスキップ
+    ).filter(( # クローン元スキーマ自身が対象。他はスキップ
+            col('OBJECT_CATALOG') == src_db
+        ) & (
+            (col('OBJECT_NAME') == src_schema)
+        ) & (
+            (col('OBJECT_TYPE') == 'SCHEMA')
         )
     )
 
     for row in src_objs.to_local_iterator():
+        # SQL compilation error: Object type or Class 'CONTACT' does not exist or not authorized.
+        if row["PRIVILEGE_TYPE"] in ['CREATE CONTACT']:
+            continue
+
         try:
             # 権限付与
             # with grant option （権限を自身以外のロールに付与できる）が有効なとき IS_GRANTABLE = YES になっている
             is_grantable = 'WITH GRANT OPTION' if (row["IS_GRANTABLE"]=="YES") else ''
-            # スキーマオブジェクトかスキーマかで on ... を書き分ける
-            on_clause = f'on {row["OBJECT_TYPE"]} {dst_db}.{dst_schema}' \
-                if (row["OBJECT_TYPE"] == "SCHEMA") else f'on {row["OBJECT_TYPE"]} {dst_db}.{dst_schema}.{row["OBJECT_NAME"]}'
             query = f'''
                 grant {row["PRIVILEGE_TYPE"]} 
-                    {on_clause}
+                    on {row["OBJECT_TYPE"]} {dst_db}.{dst_schema}
                     to role {row["GRANTEE"]}
                     {is_grantable}
                 ;
             '''
-            print(query)
+            logger.debug(query)
             session.sql(query).collect()
 
         # GRANT でのエラーは無視、ログに出すだけ
         except Exception as e:
-            print(
+            logger.info(
                 get_error_msg(
                     f'Ignore error: grant privilege {on_clause}',
                     e
@@ -271,39 +332,19 @@ call M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy_grants(
     at_or_before_statement=>NULL
 );
 
--- 履歴を確認してみよう ※VSCode上で実行すると履歴が見えないかも
+-- 履歴を確認してみよう ※VSCode上で実行すると余計な履歴も見えちゃうかも
 select *
 from table(information_schema.query_history_by_session())
 order by start_time desc;
 
 -- クローン先の権限を確認してみよう
 show grants on schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
+--  2024年12月9日 追記：CREATE CONTACT という権限を grant できないので、全コピできなくなってます。ストアド内ではスキップ。
+-- 「SQL compilation error: Object type or Class 'CONTACT' does not exist or not authorized.」
+
 -- テーブルは変わらないので特に確認しなくてよし
 -- show grants on table M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone.table_one;
 
-
--- 
--- テーブル以外のオブジェクト
--- 
--- ためしにtask
-CREATE TASK M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema.cold_lonely_task
-  SCHEDULE = 'USING CRON 0 0 1 * * Asia/Tokyo'
-  AS
-    SELECT CURRENT_TIMESTAMP;
-
-grant all on task M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema.cold_lonely_task to frosty_role_one;
-
-show grants on task M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema.cold_lonely_task;
-
--- ふつうにクローンする...
-create or replace schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone
-    clone M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema;
-
--- クローン先の権限を確認してみよう
--- スキーマに対する権限はコピーされていない様子がわかる
-show grants on schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
-show grants on task M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema.cold_lonely_task;
-show grants on table M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone.table_one;
 
 
 -- 
@@ -326,6 +367,242 @@ call M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy_grants(
 );
 
 -- 中身を見てみよう。TABLE_ONE のみならOK
+show tables in schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
+
+-------------------------------------------------------------------------------
+-- 
+-- パターン2
+-- 
+-- show grants on schema  を使う
+-- show grants は所有者権限の SPROC でサポートされていないので 呼び出し元権限（Caller's rights）にする必要あり
+-- （execute as owner だと Stored procedure execution error: Unsupported statement type 'SHOW GRANT'. となる）
+-- 
+-------------------------------------------------------------------------------
+
+create or replace procedure M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy_grants_2(
+    database_name string, 
+    schema_name string, 
+    target_database string, 
+    cloned_schema_name string, 
+    at_or_before_statement string
+)
+  returns varchar
+  language python
+  runtime_version = '3.11'
+  packages = ('snowflake-snowpark-python==1.20.0')
+  handler = 'main'
+  comment = 'スキーマに付与された権限も含めてクローンする'
+  execute as caller
+  as
+$$
+import snowflake.snowpark as snowpark
+from snowflake.snowpark.functions import col
+from snowflake.snowpark.exceptions import SnowparkSQLException
+import logging
+
+logger = logging.getLogger("schema_clone_with_copy_grants")
+
+def get_error_msg(details: str, excepion: Exception) -> dict:
+    '''エラー発生時にストアドプロシージャが返すメッセージを作成'''
+    return {
+        'STATUS': 'Error',
+        'DETAILS': details,
+        'EXCEPTION': excepion
+    }
+
+def get_identify_schema_name(
+        session: snowpark.Session,
+        database_name: str,
+        schema_name: str,
+    ) -> dict:
+    '''解決可能なデータベース名、スキーマ名を取得。" はつけないので使う側で付けてほしい
+
+    Parameters
+    ----------
+    session : snowpark.Session
+        セッション
+    database_name : str
+        データベース名
+    schema_name : str
+        スキーマ名
+
+    Returns
+    -------
+    dict
+        {
+            "database_name": <データベース名>,
+            "schema_name": <スキーマ名>
+        }
+    '''    
+    schema_info = session.sql(
+        f"show schemas like '{schema_name}' in database {database_name}").collect()[0].as_dict()
+    database_name = schema_info["database_name"]
+    schema_name = schema_info["name"]
+    logger.debug(f'schema name: "{database_name}"."{schema_name}"')
+    
+    return {
+        "database_name": database_name,
+        "schema_name": schema_name
+    }
+
+
+def copy_table_with_grant(
+        session: snowpark.Session,
+        src_db: str,
+        src_schema: str,
+        dst_db: str,
+        dst_schema: str,
+        at_or_before_statement='') -> str:
+    '''データベース・スキーマに付与された権限も含めてコピーを行う
+    
+    Parameters
+    ----------
+    session: snowpark.Session
+        Snoflake セッション
+    src_db: str
+        コピー元データベース
+    src_schema: str
+        コピー元スキーマ
+    dst_db: str
+        コピー先データベース
+    dst_schema: str
+        コピー先スキーマ
+    at_or_before_statement : str, optional
+        CREATE ... CLONE 文に追加する AT/BEFORE を指定する。デフォルトは空文字
+
+    Returns
+    -------
+    str
+        messages
+    '''
+
+    try:
+        session.sql(
+            f'''
+                create schema {dst_db}.{dst_schema} 
+                    clone {src_db}.{src_schema}
+                    {(at_or_before_statement or "")}
+            '''
+        ).collect()
+
+    except Exception as e:
+        return get_error_msg(
+            f'Failed to create schema clone from `{src_db}.{src_schema}` to `{dst_db}.{dst_schema}`',
+            e
+        )
+
+    # データベース名、スキーマ名を解決
+    src_schema_info = get_identify_schema_name(
+        session=session,
+        database_name=src_db,
+        schema_name=src_schema
+    )
+    src_db = src_schema_info["database_name"]
+    src_schema = src_schema_info["schema_name"]
+
+    dst_schema_info = get_identify_schema_name(
+        session=session,
+        database_name=dst_db,
+        schema_name=dst_schema
+    )
+    dst_db = dst_schema_info["database_name"]
+    dst_schema = dst_schema_info["schema_name"]
+
+    # 対象オブジェクトに付与されている権限を取得
+    src_objs = session.sql(f'show grants on schema "{src_db}"."{src_schema}"')
+
+    for row in src_objs.to_local_iterator():
+        # SQL compilation error: Object type or Class 'CONTACT' does not exist or not authorized.
+        if row["privilege"] in ['CREATE CONTACT']:
+            continue
+
+        try:
+            # 権限付与
+            # with grant option （権限を自身以外のロールに付与できる）が有効なとき grant_option = True になっている
+            is_grantable = 'WITH GRANT OPTION' if (row["grant_option"]==True) else ''
+            query = f'''
+                grant {row["privilege"]} 
+                    on {row["granted_on"]} {dst_db}.{dst_schema}
+                    to role {row["grantee_name"]}
+                    {is_grantable}
+                ;
+            '''
+            logger.debug(query)
+            session.sql(query).collect()
+
+        # GRANT でのエラーは無視、ログに出すだけ
+        except Exception as e:
+            logger.info(
+                get_error_msg(
+                    f'Ignore error: grant privilege {on_clause}',
+                    e
+                )
+            )
+            pass
+
+    return f'{dst_db}.{dst_schema} succesfully cloned from {src_db}.{src_schema}'
+
+def main(
+        session: snowpark.Session,
+        database_name: str,
+        schema_name: str,
+        target_database: str,
+        cloned_schema_name: str,
+        at_or_before_statement: str) -> str:
+    return copy_table_with_grant(
+        session=session,
+        src_db=database_name,
+        src_schema=schema_name,
+        dst_db=target_database,
+        dst_schema=cloned_schema_name,
+        at_or_before_statement=at_or_before_statement)
+
+$$
+;
+
+-- クローン先を削除しておく
+drop schema if exists M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
+
+-- 実行してみよう！
+call M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy_grants_2(
+    database_name=>'M_KAJIYA_FROSTY_FRIDAY',
+    schema_name=>'cold_lonely_schema',
+    target_database=>'M_KAJIYA_FROSTY_FRIDAY',
+    cloned_schema_name=>'cold_lonely_clone', 
+    at_or_before_statement=>NULL
+);
+
+-- 履歴を確認してみよう ※VSCode上で実行すると余計な履歴も見えちゃうかも
+select *
+from table(information_schema.query_history_by_session())
+order by start_time desc;
+
+-- クローン先の権限を確認してみよう
+show grants on schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
+-- テーブルは変わらないので特に確認しなくてよし
+-- show grants on table M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone.table_one;
+
+
+-- 
+-- at_or_before_statement オプションを試しましょう
+-- 
+create or replace table cold_lonely_schema.table_three (key int, value varchar);
+grant all on table cold_lonely_schema.table_three to frosty_role_three;
+
+-- クローン先を削除
+drop schema if exists M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
+
+-- クローンする
+call M_KAJIYA_FROSTY_FRIDAY.PUBLIC.schema_clone_with_copy_grants_2(
+    database_name=>'M_KAJIYA_FROSTY_FRIDAY', 
+    schema_name=>'cold_lonely_schema',
+    target_database=>'M_KAJIYA_FROSTY_FRIDAY',
+    cloned_schema_name=>'cold_lonely_clone', 
+    -- at_or_before_statement=>'at (timestamp => to_timestamp_tz(''2024/08/16 17:00:00'', ''yyyy/mm/dd hh24:mi:ss''))'
+    at_or_before_statement=>'at (offset => -60*5)'
+);
+
+-- 中身を見てみよう。TABLE_ONE、TABLE_TWO のみならOK
 show tables in schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
 
 
@@ -359,7 +636,7 @@ where
 -- すれば良さそう、となります
 
 -- なお、ビューなので AT|BEFORE は効きません（指定できるけど意味がない）
--- しかたがないので、エラーを無視します（確実なのはは存在チェックだけど、全部やってると遅い）
+-- しかたがないので、エラーを無視します（確実なのは存在チェックだけど今回はやらん）
 
 ------------------------------------------------------------
 -- 
@@ -367,6 +644,7 @@ where
 -- 
 ------------------------------------------------------------ 
 
+use role SYSADMIN;
 delete schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_schema;
 delete schema M_KAJIYA_FROSTY_FRIDAY.cold_lonely_clone;
 
