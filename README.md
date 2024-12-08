@@ -9,6 +9,7 @@
 |sql|解答クエリ|
 |script|クエリ実行用スクリプト|
 |log|クエリ実行ログ|
+|terraform|解答 Terraform コード|
 
 # 実行環境
 ## on VSCode
