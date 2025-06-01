@@ -47,3 +47,5 @@ terraform*.log
 
 **/.env
 **/.ssh/*
+
+.ssh/*
