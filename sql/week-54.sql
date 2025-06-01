@@ -127,7 +127,7 @@ VALUES
 --role creation
 USE ROLE SECURITYADMIN; -- 指定が無いので追加
 CREATE ROLE week_54_role;
-GRANT ROLE week_54_role to user "m.kajiya@datumstudio.jp";
+GRANT ROLE week_54_role to user <your_user_name>; -- <your_user_name> を自分のユーザ名に置き換えてください
 
 use role SYSADMIN; -- 指定が無いので追加
 GRANT USAGE ON database identifier($DB_F_F_WEEK_54)
