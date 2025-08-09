@@ -20,7 +20,7 @@ from @s3_stage/challenge_64/french_monarchs.parquet
 
 ---
 
-皆様、こんにちは。10月5日にパリで開催される「Data Cloud World Tour Paris」において、Jade Le VanとMaxime Simonの素晴らしいご尽力により、「Jeudis Givrés」をリリースすることをお知らせでき、大変嬉しく思います！
+皆様、ようこそ！10月5日にパリで開催される「Data Cloud World Tour Paris」において、Jade Le VanとMaxime Simonの素晴らしいご尽力により、「Jeudis Givrés（フロスティ・サーズデー）」をリリースすることをお知らせでき、大変嬉しく思います！
 すべてのFrosty Fridayチャレンジはフランス語に翻訳され、次の木曜日にリリースされます（語呂合わせのため）。
 その後、パリ（およびフランス全土）のSnowflakeスキル向上を支援する多くのコミュニティイベントが開催されます！
 記念として、スペイン国王をテーマにした Week 4 のチャレンジを再訪しますが、今回はXML形式（一部をフランス人が考案した言語）で挑戦します。フランス王朝の君主を抽出できますか？
@@ -41,6 +41,19 @@ from @s3_stage/challenge_64/french_monarchs.parquet
 ```
 
 --- 小噺
+
+この問題は 2023-09-22 に公開されました。したがって XML 機能はパブリックプレビュー状態の時期ですね。
+XML 機能は Snowflake の初期からパブリックプレビューで提供されており（Web archive で preview feature の過去ページを見たら Introduced: N/A となっていたのでいつ開始か不明）、
+2025年9月に一般提供（GA）となりました。
+
+cf. https://web.archive.org/web/20230511040330/https://docs.snowflake.com/en/release-notes/preview-features
+cf. https://docs.snowflake.com/en/release-notes/2025/9_07#semi-structured-data-xml-format-general-availability
+
+--- 小噺 その2
+
+> XML形式（一部をフランス人が考案した言語）
+
+そ、そうなの！？ということで XML の成り立ちについて簡単に調べてみました。
 
   1. Jean Paoli - Wikipedia
 
@@ -68,8 +81,6 @@ from @s3_stage/challenge_64/french_monarchs.parquet
 
 */
 
---- Week 4 の XML版チャレンジです。なので今一度 Week 4 の内容を確認しておきましょうか。
-
 ------------------------------------------------------------
 -- 
 -- 準備
@@ -91,7 +102,7 @@ create or replace temporary stage s3_stage
 
 -- まずは中身を見てみよう
 select
-    $1 as data
+    $1 -- PARQUET file format can produce one and only one column of type variant, object, or array. なので $1 だけ見ればいいよ
 from
     @s3_stage/challenge_64/french_monarchs.parquet
     (file_format => frosty_parquet)
@@ -99,7 +110,10 @@ from
 
 -- 同じ内容かな........？
 -- 全然わからないので AI に整形してもらう → week64.xml, week-4.sql
+-- ：
+-- Monarchs 単位で XML データが格納されているところ、House か Dynasty か、など、 Week 4 の内容と若干異なっていますね
 
+-- 改めて、回答用のテーブルを作成しましょう
 create or replace temporary table week64 as
 select
     parse_xml($1:"DATA") as data
@@ -109,11 +123,11 @@ from
 ;
 
 table week64;
--- Monarchs 単位で XML データが格納されているところなど、 Week 4 の内容と若干異なる
 
 ------------------------------------------------------------
 -- 
--- 課題1. XMLデータからフランス君主の情報を抽出しよう
+-- 課題. XMLデータからフランス君主の情報を抽出しよう
+-- 解法1
 -- 
 ------------------------------------------------------------ 
 
@@ -146,6 +160,7 @@ from
     week64,
     lateral flatten (input => data:"$") as dynasties,
     lateral flatten (input => to_array(dynasties.value:"$")) as monarchs
+    -- lateral flatten (input => dynasties.value:"$") as monarchs
 ;
 -- to_array() がないと、、、
 -- Monarch が ARRAY の場合と VARIANT の場合があり、VARIANT のときにキーと値が展開されちゃうので、ARRAYに統一する
@@ -158,7 +173,7 @@ select
     dynasties.value:"@name"::varchar as dynasty, -- 王朝名
     monarchs.value as monarch, -- 君主の情報
     monarch::varchar, -- XML 要素なので...（varcharにするとわかりやすい）
-    monarch:"Monarch":"Name", -- これじゃあ中身を取れない
+    monarch:"Monarch":"Name", -- いつもの構文では中身を取れない。。。
     xmlget(monarchs.value, 'Name'):"$"::varchar as name -- 君主名 -- タグを取得して値を取得して文字列型に変える
 from
     week64,
@@ -166,7 +181,7 @@ from
     lateral flatten (to_array(dynasties.value:"$"::variant)) as monarchs
 ;
 
--- ここまで来れば、、、
+-- ここまで来れば、君主の情報を抽出できますね！
 select 
     dynasties.value:"@name"::varchar as dynasty, -- 王朝名
     xmlget(monarchs.value, 'Name'):"$"::varchar as name, -- 君主名
@@ -177,6 +192,28 @@ from
     week64,
     lateral flatten (data:"$") as dynasties,
     lateral flatten (to_array(dynasties.value:"$"::variant)) as monarchs
+;
+
+-- ところで、、、ちょっと説明がわからないので、日本語に翻訳してもらいましょうか
+select 
+    dynasties.value:"@name"::varchar as dynasty, -- 王朝名
+    xmlget(monarchs.value, 'Name'):"$"::varchar as name, -- 君主名
+    xmlget(monarchs.value, 'Reign'):"$"::varchar as reign, -- 君主の治世
+    xmlget(monarchs.value, 'Succession'):"$"::varchar as succession, -- 君主の継承
+    xmlget(monarchs.value, 'LifeDetails'):"$"::varchar as life_details -- 君主の生涯
+from
+    week64,
+    lateral flatten (data:"$") as dynasties,
+    lateral flatten (to_array(dynasties.value:"$"::variant)) as monarchs
+->>
+select
+    SNOWFLAKE.CORTEX.TRANSLATE(dynasty, 'en', 'ja') as dynasty,
+    SNOWFLAKE.CORTEX.TRANSLATE(name, 'en', 'ja') as name,
+    SNOWFLAKE.CORTEX.TRANSLATE(reign, 'en', 'ja') as reign,
+    SNOWFLAKE.CORTEX.TRANSLATE(succession, 'en', 'ja') as succession,
+    SNOWFLAKE.CORTEX.TRANSLATE(life_details, 'en', 'ja') as life_details,
+from
+    $1
 ;
 
 ------------------------------------------------------------
