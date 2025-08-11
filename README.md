@@ -10,6 +10,7 @@
 |script|クエリ実行用スクリプト|
 |log|クエリ実行ログ|
 |terraform|解答 Terraform コード|
+|python|解答 Python コード|
 |image|画像（解答補足など）|
 
 # 実行環境

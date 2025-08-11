@@ -1,0 +1,18 @@
+default_connection_name = "sandbox"
+
+[cli]
+ignore_new_version_warning = false
+
+[cli.logs]
+save_logs = true
+path = "/root/.snowflake/logs"
+level = "info"
+
+[connections.sandbox]
+account = "sandbox"
+user = "your_user"
+database = "your_database"
+schema = "your_schema"
+warehouse = "your_warehouse"
+role = "your_role"
+authenticator = "SNOWFLAKE_JWT"

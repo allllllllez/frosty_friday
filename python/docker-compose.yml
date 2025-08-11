@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  snowflake-python:
+    build: .
+    container_name: snowflake-python-api
+    volumes:
+      # Mount current directory
+      - .:/workspace
+      # Mount SSH keys for authentication
+      - ../.ssh:/root/.ssh:ro
+      # Mount Snowflake configuration
+      - ../.snowflake:/root/.snowflake:rw
+    environment:
+      # Snowflake connection parameters
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      # Authentication
+      - SNOWFLAKE_PRIVATE_KEY_PATH=/root/.ssh/rsa_key.p8
+      - SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}
+    env_file:
+      - ../.env
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+
+  jupyter:
+    build: .
+    container_name: snowflake-jupyter
+    ports:
+      - "8888:8888"
+    volumes:
+      - .:/workspace
+      - ../sql:/workspace/sql
+      - ../data:/workspace/data
+      - ../.ssh:/root/.ssh:ro
+    environment:
+      - SNOWFLAKE_ACCOUNT=${SNOWFLAKE_ACCOUNT}
+      - SNOWFLAKE_USER=${SNOWFLAKE_USER}
+      - SNOWFLAKE_ROLE=${SNOWFLAKE_ROLE}
+      - SNOWFLAKE_WAREHOUSE=${SNOWFLAKE_WAREHOUSE}
+      - SNOWFLAKE_DATABASE=${SNOWFLAKE_DATABASE}
+      - SNOWFLAKE_SCHEMA=${SNOWFLAKE_SCHEMA}
+      - SNOWFLAKE_PRIVATE_KEY_PATH=/root/.ssh/rsa_key.p8
+      - SNOWFLAKE_PRIVATE_KEY_PASSPHRASE=${SNOWFLAKE_PRIVATE_KEY_PASSPHRASE}
+    env_file:
+      - ../.env
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=''
