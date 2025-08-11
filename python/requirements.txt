@@ -1,0 +1,12 @@
+# Snowflake Python API
+snowflake=1.7.0
+snowflake-connector-python[pandas]==3.16.0
+snowflake-snowpark-python==1.36.0
+
+# Development tools
+ipython==9.4.0
+jupyter==1.1.1
+
+# Other tools
+dotenv==0.9.9
+toml==0.10.2

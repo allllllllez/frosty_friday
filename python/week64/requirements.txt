@@ -1,0 +1,2 @@
+# XML processing (ElementTree is built-in)
+lxml==6.0.0

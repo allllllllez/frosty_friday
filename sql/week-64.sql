@@ -49,36 +49,6 @@ XML 機能は Snowflake の初期からパブリックプレビューで提供�
 cf. https://web.archive.org/web/20230511040330/https://docs.snowflake.com/en/release-notes/preview-features
 cf. https://docs.snowflake.com/en/release-notes/2025/9_07#semi-structured-data-xml-format-general-availability
 
---- 小噺 その2
-
-> XML形式（一部をフランス人が考案した言語）
-
-そ、そうなの！？ということで XML の成り立ちについて簡単に調べてみました。
-
-  1. Jean Paoli - Wikipedia
-
-  https://en.wikipedia.org/wiki/Jean_Paoli
-  - Jean PaoliのXML共同発明者としての経歴
-  - INRIAでの10年間の研究活動
-  - 1996年のMicrosoft入社とXML開発への貢献
-
-  2. Docugami創業者インタビュー（フランス語）
-
-  https://www.journaldunet.com/intelligence-artificielle/1542383-ce-ponte-du-xml-issu-de-l-excellence-francaise-implante-sa-start-up-en-france/
-  - XMLの起源がINRIA時代の研究に基づくこと
-  - SGMLからXMLへの進化の経緯
-  - フランスの研究機関での基礎研究の重要性
-
-  3. W3C XML 10周年記念ページ
-
-  https://www.w3.org/press-releases/2008/xml10/
-  - XML Working Groupの公式メンバーリスト
-  - Jean Paoliが共同編集者として参加した経緯
-  - XML 1.0仕様の制定プロセス
-
-  Jean Paoliは、フランスのINRIAで10年間SGMLの研究を行い、その知見を基にXMLを共同発明しました。
-
-
 */
 
 ------------------------------------------------------------
