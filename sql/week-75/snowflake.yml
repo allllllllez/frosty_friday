@@ -1,0 +1,14 @@
+definition_version: 2
+entities:
+  pkg:
+    type: application package
+    identifier: m_kajiya_frosty_friday_week75_pkg
+    artifacts:
+      - src: app/*
+        dest: ./
+    manifest: app/manifest.yml
+  app:
+    type: application
+    identifier: m_kajiya_frosty_friday_week75_app
+    from:
+      target: pkg
