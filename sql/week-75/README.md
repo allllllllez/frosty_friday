@@ -1,4 +1,5 @@
 # [Week 75 – Hard, Native App Permissions](https://frostyfriday.org/blog/2023/12/15/week-75-hard/)
+## チャレンジ内容（原文）
 
 One of the cool things about native apps, is the ability to request permissions and be granted them without actually having real access to the consumer account.
 Instead, the application gets the permissions.
@@ -18,7 +19,7 @@ Your native app should then verify it has all the permissions it needs. The flow
 Here is a zip with the skeleton code. You will need to change every file in the zip.
 Good luck!
 
----
+## チャレンジ内容（日本語訳・機械翻訳）
 
 ネイティブアプリの優れた点の一つは、実際のユーザーアカウントへのアクセス権を持たずに権限を要求し、許可を得られることです。
 代わりに、アプリケーションが権限を取得します。
@@ -38,26 +39,29 @@ Good luck!
 以下にスケルトンコードのzipファイルを用意しました。zip内の全ファイルを変更する必要があります。
 頑張ってください！
 
----
+# 解法
 
-「You will need to change every file in the zip.」と言ったな。**あれは本当だ。**
+「_You will need to change every file in the zip._」と言ったな。**あれは本当だ。**
 本当に全ファイルに渡って、修正が必要なんです。。。
+
+まず、スケルトンコードの中身はこんな感じなんですね。
+
+```
+week75+-+starter.zip
+├── manifest.yml         # マニフェストファイル
+├── README.md
+├── scripts/
+│   └── setup.sql        # セットアップスクリプト
+└── streamlit/
+    ├── streamlit.py     # Stremlit アプリ
+    └── environment.yml  # Stremlit アプリの依存パッケージ
+```
+
 修正箇所はオレンジの個所です。
 
 <img src="images/image.png" width=600>
 
-<details>
-<summary>修正箇所はこちら</summary>
-
-<img src="images/image-1.png" width=600>
-
-<img src="images/image-2.png" width=600>
-
-<img src="images/image-3.png" width=600>
-
-<img src="images/image-4.png" width=600>
-
-</details>
+以下、解法の詳細は [こちらの記事](https://zenn.dev/datum_studio/articles/week75-native-app-permissions) に記載しました。
 
 # フォルダ説明
 
@@ -66,9 +70,9 @@ Good luck!
 |week75starter|オリジナルの Native App ソースコード|
 |app|修正した Native App ソースコード|
 
-# つかいかた
+# 開発環境の使い方
 
-## 開発環境
+## 起動
 make コマンドで開発環境コンテナを起動します。
 
 ```
@@ -158,3 +162,6 @@ https://app.snowflake.com/<your_account>/sandbox/#/apps/application/FROSTY_FRIDA
 ```
 
 これで、プロジェクト定義で app に指定した内容でアプリケーションが作成される。URLにアクセスしよう。
+
+<img src="images/image-5.png" width=600>
+

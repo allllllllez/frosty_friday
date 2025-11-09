@@ -6,7 +6,10 @@ help: ## Usage
 build: ## Build Docker image
 	docker-compose build
 
-run: build ## Run interactive shell
+run: ## Run interactive shell
+	docker-compose run --rm snowflake-native-app
+
+build_run: build ## Build and Run interactive shell
 	docker-compose run --rm snowflake-native-app
 
 clean: ## Clean up containers
