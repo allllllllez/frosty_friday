@@ -1,0 +1,29 @@
+Transaction_ID,Timestamp,Till_Number,Clerk_Name,Product_Name,Total_Price
+00de6fab-a5a3-46cd-9e84-2146862d501c,2026-05-28 10:05:00,1,Mary Harris,Snowflake Mug,596.84
+7aa5fe1d-b735-4632-9595-26757711b751,2026-05-28 10:12:00,2,Mary Harris,Frosty Hoodie,1325.44
+2a550637-526c-471d-811d-35b6d6413d51,2026-05-28 10:18:00,3,Mary Harris,Cortex Sticker Set,347.22
+cd28441e-845a-4eed-b457-152141b54b0a,2026-05-28 10:25:00,4,Mary Harris,Iceberg Notebook,570.78
+6d375503-5021-481b-8bf8-9227eece5e22,2026-05-28 10:31:00,5,Mary Harris,Glacier Bottle,450.94
+5bb58492-9daf-46be-ad21-914625ee8c4c,2026-05-28 10:45:00,1,Mary Harris,Frostbite Tee,5000.00
+a931c942-b666-4afe-8dee-318d2b7087bd,2026-05-28 10:52:00,1,Mary Harris,Avalanche Cap,2800.00
+4af52599-6263-40db-aeb7-49c19b9ae91b,2026-05-28 11:15:00,1,John Smith,Polar Backpack,3500.00
+94d0f69b-90f5-4b6c-adda-2c189e145325,2026-05-28 12:30:00,1,Bob Johnson,Tundra Wallet,2826.08
+8b014dc3-87b5-4489-b96b-a8860b109d1b,2026-05-28 13:10:00,1,Alice Davis,Permafrost Pen,3000.00
+e28e434c-8505-4890-bf11-0e279ea1eb4b,2026-05-28 10:40:00,2,Mary Harris,Frostbite Tee,6000.00
+ca758647-bc3d-4a2d-af72-df18e1246f57,2026-05-28 11:22:00,2,Mary Harris,Glacier Bottle,4500.00
+8295bc5d-3a12-4b95-b107-7bc7608aef14,2026-05-28 09:50:00,2,Bob Johnson,Tundra Wallet,2500.00
+0d8885e4-cf69-41bd-95be-9f0c20c7d6bc,2026-05-28 12:12:00,2,John Smith,Polar Backpack,3921.95
+9349e388-9bfc-4c9e-af0b-051bb095d698,2026-05-28 14:05:00,2,Alice Davis,Permafrost Pen,3000.00
+d6621f80-8044-485d-a5fc-7f5c711556cc,2026-05-28 10:48:00,3,Mary Harris,Avalanche Cap,5500.00
+86904053-87c8-4601-b6da-a44038d69c75,2026-05-28 11:35:00,3,Mary Harris,Cortex Sticker Set,4200.00
+697a8d8c-9f00-43e2-bda3-c77a2535cac5,2026-05-28 12:20:00,3,John Smith,Iceberg Notebook,3869.01
+1188cfc5-ab98-4207-ba88-f02ea1529f3b,2026-05-28 14:18:00,3,Bob Johnson,Snowflake Mug,2500.00
+d417b1d3-178d-4593-9c7d-a02c3f16ac77,2026-05-28 15:02:00,3,Alice Davis,Frosty Hoodie,3000.00
+31c9d4e6-b008-461a-a0a4-6829553e4661,2026-05-28 10:55:00,4,Mary Harris,Glacier Bottle,3000.00
+9a586d20-bf63-49a4-ad6a-95a58289b8b9,2026-05-28 11:40:00,4,John Smith,Polar Backpack,2500.00
+2229201f-65ff-40bc-9719-9a296e5984bb,2026-05-28 12:45:00,4,Bob Johnson,Tundra Wallet,2229.22
+5d0b0234-2ac1-4b72-8e04-d900e856c8d6,2026-05-28 13:25:00,4,Alice Davis,Permafrost Pen,1500.00
+3cbc3a72-96bc-405d-9262-28813515a814,2026-05-28 10:58:00,5,Mary Harris,Snowflake Mug,3000.00
+20b060c5-6ece-4cd8-8b7c-ea37a1a34aeb,2026-05-28 11:48:00,5,John Smith,Iceberg Notebook,2500.00
+f6f329c5-70ca-455e-9d6f-f30e8edd192e,2026-05-28 13:35:00,5,Bob Johnson,Avalanche Cap,2346.78
+446476ff-e389-43b5-8468-8275ab2e8a42,2026-05-28 14:20:00,5,Alice Davis,Frosty Hoodie,1500.00
