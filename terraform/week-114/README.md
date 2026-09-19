@@ -6,6 +6,9 @@
 [sql/week-114.sql](../../sql/week-114.sql) は SQL での解法、こちらは Terraform での解法です。
 インフラ部分（schema・stage・table定義・Cortex Search Service）を Terraform で作成します。ドキュメントのアップロードや本文抽出、検証などデータの操作はSQLで手動実行します。
 
+> [!NOTE]
+> 放送時と構成をちょっとだけ変更しています（modulesへのリソース定義の移動）
+
 ## 目次 <!-- omit in toc -->
 
 - [概要](#概要)
@@ -23,9 +26,8 @@
 
 | フォルダ | 内容 |
 |:--|:--|
-| [modules/journal_search](./modules/journal_search) | 実体（schema・stage・table定義・Cortex Search Service）を定義するTerraformモジュール。dev/stg/prdで共有する想定 |
-| [environments/dev](./environments/dev) | dev環境固有の設定。`terragrunt.hcl`が`terraform.source`で上記モジュールを指し、CSVから読んだ値を`inputs`として渡す。今回はdevだけ |
-| [environments/dev/parameters/database](./environments/dev/parameters/database) | database/schema/warehouse名などの設定値（csv）|
+| [modules](./modules) | Terraform モジュール置き場。今回は Cortex Search Service セットのみ（[modules/journal_search](./modules/journal_search)） |
+| [environments](./environments) | 環境別の実行ディレクトリ。今回はdevのみ（[environments/dev](./environments/dev)） |
 
 ## 事前準備
 
